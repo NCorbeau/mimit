@@ -1,0 +1,32 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: mimit
+          POSTGRES_PASSWORD: mimit
+          POSTGRES_DB: mimit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mimit -d mimit"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://mimit:mimit@localhost:5432/mimit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.22"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: make check
+      - run: make test-integration

@@ -1,0 +1,159 @@
+"""Lazy, validated runtime configuration; importing this module reads no environment."""
+
+from functools import lru_cache
+from typing import Any, Self
+from urllib.parse import urlsplit, urlunsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import (
+    Field,
+    ModelWrapValidatorHandler,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+from pydantic_core import InitErrorDetails
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+        hide_input_in_errors=True,
+        frozen=True,
+    )
+
+    database_url_secret: SecretStr = Field(alias="DATABASE_URL")
+    telegram_bot_token: SecretStr | None = Field(default=None, alias="TELEGRAM_BOT_TOKEN")
+    telegram_webhook_secret: SecretStr | None = Field(default=None, alias="TELEGRAM_WEBHOOK_SECRET")
+    public_base_url: str | None = Field(default=None, alias="PUBLIC_BASE_URL")
+    household_timezone: str = Field(default="Europe/Warsaw", alias="HOUSEHOLD_TIMEZONE")
+    telegram_allowed_user_id: int | None = Field(
+        default=None, alias="TELEGRAM_ALLOWED_USER_ID", gt=0
+    )
+    telegram_allowed_chat_id: int | None = Field(default=None, alias="TELEGRAM_ALLOWED_CHAT_ID")
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def redact_validation_inputs(cls, value: Any, handler: ModelWrapValidatorHandler[Self]) -> Self:
+        """Keep credentials out of both rendered and structured validation errors."""
+        try:
+            return handler(value)
+        except ValidationError as exc:
+            errors: list[InitErrorDetails] = []
+            for error in exc.errors(include_url=False):
+                sanitized: InitErrorDetails = {
+                    "type": error["type"],
+                    "loc": error["loc"],
+                    "input": "<redacted>",
+                }
+                if "ctx" in error:
+                    sanitized["ctx"] = error["ctx"]
+                errors.append(sanitized)
+            raise ValidationError.from_exception_data(
+                cls.__name__, errors, hide_input=True
+            ) from None
+
+    @field_validator("database_url_secret")
+    @classmethod
+    def normalize_database_url(cls, value: SecretStr) -> SecretStr:
+        raw = value.get_secret_value()
+        try:
+            parsed = urlsplit(raw)
+            valid = (
+                parsed.scheme in {"postgres", "postgresql", "postgresql+asyncpg"}
+                and parsed.hostname is not None
+                and parsed.port != 0
+                and bool(parsed.path.strip("/"))
+                and not parsed.fragment
+                and not any(character.isspace() for character in raw)
+            )
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("DATABASE_URL must be a PostgreSQL URL with a host and database")
+        return SecretStr(urlunsplit(parsed._replace(scheme="postgresql+asyncpg")))
+
+    @field_validator("telegram_bot_token", "telegram_webhook_secret")
+    @classmethod
+    def validate_secret(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None:
+            raw = value.get_secret_value()
+            if not raw or any(character.isspace() for character in raw):
+                raise ValueError("configured secrets must be nonempty and contain no whitespace")
+        return value
+
+    @field_validator("public_base_url")
+    @classmethod
+    def validate_public_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            parsed = urlsplit(value)
+            valid = (
+                parsed.scheme == "https"
+                and parsed.hostname is not None
+                and parsed.port != 0
+                and parsed.username is None
+                and parsed.password is None
+                and not parsed.query
+                and not parsed.fragment
+                and not any(character.isspace() for character in value)
+            )
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("PUBLIC_BASE_URL must be an absolute HTTPS URL without credentials")
+        return value.rstrip("/")
+
+    @field_validator("household_timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("HOUSEHOLD_TIMEZONE must be an IANA timezone name") from None
+        return value
+
+    @field_validator("telegram_allowed_chat_id")
+    @classmethod
+    def validate_chat_id(cls, value: int | None) -> int | None:
+        if value == 0:
+            raise ValueError("TELEGRAM_ALLOWED_CHAT_ID must be a nonzero integer")
+        return value
+
+    @property
+    def database_url(self) -> str:
+        """Reveal the normalized connection URL only at the connection boundary."""
+        return self.database_url_secret.get_secret_value()
+
+    def require_telegram_configuration(self) -> None:
+        """Fail closed before any future Telegram runtime is enabled."""
+        required = {
+            "TELEGRAM_BOT_TOKEN": self.telegram_bot_token,
+            "TELEGRAM_WEBHOOK_SECRET": self.telegram_webhook_secret,
+            "PUBLIC_BASE_URL": self.public_base_url,
+            "TELEGRAM_ALLOWED_USER_ID": self.telegram_allowed_user_id,
+            "TELEGRAM_ALLOWED_CHAT_ID": self.telegram_allowed_chat_id,
+        }
+        missing = [name for name, value in required.items() if value is None]
+        if missing:
+            raise ValueError("Missing Telegram configuration: " + ", ".join(missing))
+
+    def allows_telegram_identity(self, *, user_id: int, chat_id: int) -> bool:
+        """Both identifiers must match the configured single-user household."""
+        return (
+            self.telegram_allowed_user_id is not None
+            and self.telegram_allowed_chat_id is not None
+            and user_id == self.telegram_allowed_user_id
+            and chat_id == self.telegram_allowed_chat_id
+        )
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()

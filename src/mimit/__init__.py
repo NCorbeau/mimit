@@ -1,0 +1,1 @@
+"""Mimit household replenishment assistant."""

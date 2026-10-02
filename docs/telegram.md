@@ -41,7 +41,7 @@ retries unsuccessful webhook deliveries. Its hosted webhook API requires an
 HTTPS URL and supports ports 443, 80, 88, and 8443. The secret character/length
 constraints above come from the [official setWebhook contract](https://core.telegram.org/bots/api#setwebhook).
 
-When all five Telegram variables are absent, the app exposes only `/healthz`.
+When all five Telegram variables are absent, the app exposes `/healthz` and `/readyz`.
 Supplying any one attempts to enable Telegram and requires the complete set.
 `/healthz` reports process liveness, not database or sender readiness. The API
 creates a lazy database pool and disposes it during lifespan shutdown; injected
@@ -115,6 +115,8 @@ promise ordering between different updates. Use one reply process for this v1 ch
 
 ## Acceptance status
 
-Local HTTP/PostgreSQL and simulated Telegram delivery checks pass. A real bot has
-not been registered or exercised yet: the bot credentials, allowed IDs, and an
-HTTPS endpoint must be supplied before the Milestone 1 real-bot gate can pass.
+Local HTTP/PostgreSQL and simulated Telegram delivery checks pass. Railway
+deployment and production Telegram configuration are documented in
+[deployment setup](deployment.md). Full real-household onboarding, purchase,
+and stock-correction acceptance still needs to be recorded before the Milestone 1
+real-bot gate can pass.

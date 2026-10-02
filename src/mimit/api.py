@@ -1,9 +1,12 @@
 """Explicit application factory and database engine lifecycle."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mimit.clock import Clock, SystemClock
@@ -22,7 +25,7 @@ def create_app(
     enabled = resolved_settings.telegram_configured
     if enabled:
         resolved_settings.require_telegram_configuration()
-    engine = create_engine(resolved_settings.database_url) if enabled and sessions is None else None
+    engine = create_engine(resolved_settings.database_url) if sessions is None else None
     resolved_sessions = get_session_factory(engine) if engine is not None else sessions
 
     @asynccontextmanager
@@ -49,5 +52,19 @@ def create_app(
     async def healthz() -> dict[str, str]:
         """Process liveness only; this does not claim database readiness."""
         return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz() -> JSONResponse:
+        """Bounded database/schema connectivity check; no claim of worker readiness."""
+        assert resolved_sessions is not None
+        try:
+            async with asyncio.timeout(5), resolved_sessions() as session:
+                revision = await session.scalar(text("SELECT version_num FROM alembic_version"))
+                if revision is None:
+                    return JSONResponse({"status": "unavailable"}, status_code=503)
+        except Exception:
+            # Database exceptions can contain credentials; do not render or log them.
+            return JSONResponse({"status": "unavailable"}, status_code=503)
+        return JSONResponse({"status": "ok"})
 
     return app

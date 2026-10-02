@@ -50,9 +50,10 @@ delete them. Do not accept volume deletion, detachment, or placement changes as
 a routine release step. Secrets are configured separately in Railway variables;
 the infrastructure file contains references and nonsecret values only.
 
-The initial API and worker deployments track `dev/mac-59-railway-deployment` with
-CI checks enabled. After the deployment PR merges, change both source branches
-to `main` in the infrastructure file and apply. For an explicit release:
+The API and worker deployments track `main` with CI checks enabled. Infrastructure
+changes require a reviewed `railway config plan` and `railway config apply`;
+Railway does not evaluate `.railway/railway.ts` on every source deployment.
+For an explicit release:
 
 ```sh
 railway up --service mimit --detach

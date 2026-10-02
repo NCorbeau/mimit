@@ -12,7 +12,7 @@ export default defineRailway(() => {
   });
 
   const api = service("mimit", {
-    source: github("NCorbeau/mimit", { branch: "dev/mac-59-railway-deployment", checkSuites: true }),
+    source: github("NCorbeau/mimit", { branch: "main", checkSuites: true }),
     build: { builder: "DOCKERFILE", dockerfilePath: "Dockerfile" },
     start: "sh -c 'exec uvicorn mimit.api:create_app --factory --host 0.0.0.0 --port ${PORT:-8000}'",
     preDeploy: "alembic upgrade head",
@@ -32,7 +32,7 @@ export default defineRailway(() => {
     },
   });
   const worker = service("worker", {
-    source: github("NCorbeau/mimit", { branch: "dev/mac-59-railway-deployment", checkSuites: true }),
+    source: github("NCorbeau/mimit", { branch: "main", checkSuites: true }),
     build: { builder: "DOCKERFILE", dockerfilePath: "Dockerfile" },
     start: "python -m mimit.telegram.sender",
     replicas: { sfo: 1 },

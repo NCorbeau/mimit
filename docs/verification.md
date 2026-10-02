@@ -49,3 +49,47 @@ claim production Telegram or worker acceptance.
 - Review branches: `dev/mac-29-foundation` (base `main`) and
   `dev/mac-30-telegram-inventory` (base `dev/mac-29-foundation`).
   Review and merge the foundation PR first, then retarget the inventory PR to `main`.
+
+## Safe one-shot product tracking — 2 October 2026
+
+MAC-31 implementation was reviewed in an isolated worktree and split into two
+stacked changes: fetching/extraction, then observation storage/command/stock display.
+
+- `make check`: Ruff lint/format, strict mypy (42 source files), **297 fast tests passed**.
+- `TEST_DATABASE_URL=… make test-integration`: **64 PostgreSQL 17 tests passed**.
+- Migration `0003_product_observations`: zero-to-head, metadata drift, downgrade
+  and re-upgrade passed; existing immutable rows migrate without UPDATE.
+- Fetcher tests check the actual numeric socket boundary, mixed DNS answers,
+  rebinding, unsafe redirects, verified hostname/SNI, valid environment CA and
+  key-log isolation, deadlines, decompression limits, cancellation and concurrency.
+- Parser fixtures cover generic graphs, local references, compatible repeated IDs,
+  selected variants, canonical one-time pricing, excluded member/subscription
+  prices, aggregate offers, malformed numeric literals and bounded parsing.
+- PostgreSQL scenarios cover independent concurrent observations, source/ownership
+  changes during HTTP, no open transaction or inventory locks during HTTP,
+  rollback, cancellation, last-good history, and append-only snapshots.
+- Stock display reads bounded history in one SQL snapshot. A concurrent append
+  cannot mix old failure with new successful price. Five maximum-size Unicode
+  priced items plus failed attempts fit Telegram's UTF-16 message limit.
+- Independent reviews found and verified fixes for TLS environment trust/key
+  logging, numeric/aggregate parser cases, compatible repeated JSON-LD definitions,
+  history snapshot consistency, Telegram message size and bounded failed-variant snapshots. No material findings
+  remained after re-review.
+
+At **2026-10-02 16:22:47 UTC**, the production fetcher and generic extractor checked
+the original Schesir URL for variant **2333304.0**, appended exactly one successful
+observation to a disposable migrated local PostgreSQL database, and read its stock
+summary: **42.96 PLN per offer**, **84.24 PLN/kg**, **in stock**, displayed at
+18:22 CEST. Canonical stock remained pouches. The disposable database was dropped.
+These are timestamped observed prices, not test constants for future live checks.
+Generic structured data was sufficient, so MAC-47 requires no fallback adapter.
+
+This proves the local production-code path against the live merchant, not a
+Railway deployment or live Telegram price reply. MAC-31 remains open for review
+and integration. Recurring execution (MAC-32), recommendations (MAC-33) and full
+production acceptance (MAC-34/MAC-62) remain separate gates.
+
+Earlier pending live-inventory statements in this record are historical: user
+Telegram screenshots on 2 October verified onboarding, stock, purchase and
+correction, completing MAC-39/MAC-30. Deployment setup is recorded in merged
+PRs #3/#4; no deployment is performed by this product-tracking change.

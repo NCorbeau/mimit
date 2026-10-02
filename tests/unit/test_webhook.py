@@ -88,6 +88,7 @@ async def test_new_and_duplicate_updates_acknowledge_after_processing(
         chat_id=456,
         text="/stock",
         clock=FrozenClock(datetime(2026, 10, 2, tzinfo=UTC)),
+        timezone="Europe/Warsaw",
     )
 
 

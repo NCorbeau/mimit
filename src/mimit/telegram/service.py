@@ -32,11 +32,12 @@ from mimit.inventory import (
     parse_quantity,
     stock_at,
 )
+from mimit.products.display import stock_price_summaries
 
 HELP = (
     "Send a product URL to add a consumable. I'll ask for its name, stock, unit, "
-    "daily consumption, and reserve days. Price tracking is pending.\n"
-    "/stock [page] — estimated stock and item IDs\n"
+    "daily consumption, and reserve days. Automatic price checks are pending.\n"
+    "/stock [page] — estimated stock, stored prices and item IDs\n"
     "/bought <item-id> <quantity> — record a purchase\n"
     "/setstock <item-id> <quantity> — correct current stock\n"
     "/cancel — cancel onboarding\n/help — show this help"
@@ -78,6 +79,7 @@ async def process_message(
     chat_id: int,
     text: str,
     clock: Clock,
+    timezone: str = "Europe/Warsaw",
 ) -> bool:
     """Process one authenticated message; False means it was already committed."""
     del user_id  # Authorization is deliberately owned by the inbound boundary.
@@ -100,7 +102,7 @@ async def process_message(
             select(Household).where(Household.id == household_id).with_for_update()
         )
         now = clock.now()
-        reply = await _handle(session, household_id, text.strip(), now)
+        reply = await _handle(session, household_id, text.strip(), now, timezone)
         session.add(
             NotificationOutbox(
                 dedupe_key=f"telegram:{update_id}:0",
@@ -112,7 +114,9 @@ async def process_message(
     return True
 
 
-async def _handle(session: AsyncSession, household_id: UUID, text: str, now: datetime) -> str:
+async def _handle(
+    session: AsyncSession, household_id: UUID, text: str, now: datetime, timezone: str
+) -> str:
     if len(text) > 4096:
         return "That message is too long. Please use at most 4096 characters."
     conversation = await session.get(TelegramConversation, household_id)
@@ -147,6 +151,7 @@ async def _handle(session: AsyncSession, household_id: UUID, text: str, now: dat
         ).all()
         if not items:
             return "No consumables yet. Send a product URL to add one."
+        prices = await stock_price_summaries(session, [item.id for item in items], timezone)
         lines = [f"Estimated stock (page {page}/{total_pages}):"]
         for item in items:
             lines.append(
@@ -154,7 +159,7 @@ async def _handle(session: AsyncSession, household_id: UUID, text: str, now: dat
                 f"estimated {format_quantity(days_remaining(item, now))} days remaining; "
                 f"daily {format_quantity(item.daily_consumption)}; "
                 f"reserve {item.reserve_days} days\n"
-                f"ID: {item.id}"
+                f"ID: {item.id}\n{prices[item.id]}"
             )
         if page < total_pages:
             lines.append(f"Next page: /stock {page + 1}")
@@ -250,7 +255,7 @@ async def _advance(
                 f"Add {data['name']}?\nStock: {data['stock']} {data['unit']}\n"
                 f"Daily consumption: {data['daily']} {data['unit']}\n"
                 f"Reserve: {data['reserve']} days\n"
-                "Reply yes to save, or no to cancel. Price tracking is pending."
+                "Reply yes to save, or no to cancel. Automatic price checks are pending."
             )
         elif step == "confirm":
             if text.lower() in {"no", "n"}:
@@ -282,7 +287,7 @@ async def _advance(
             return (
                 f"Added {item.name}. ID: {item.id}\n"
                 f"Estimated {format_quantity(days_remaining(item, now))} days remaining.\n"
-                "Use /stock to check estimated stock. Price tracking is pending."
+                "Use /stock to check estimated stock. Automatic price checks are pending."
             )
         else:
             raise RuntimeError("Unexpected persisted conversation step")

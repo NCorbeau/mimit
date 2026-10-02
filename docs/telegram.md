@@ -2,7 +2,8 @@
 
 M1 supports one allowed user in one private chat, product onboarding, stock listing,
 purchase recording, and stock corrections. It saves product URLs without fetching
-prices; price tracking and scheduled replenishment recommendations are pending.
+prices. `/stock` can display stored operator-checked prices; recurring checks
+and scheduled replenishment recommendations are pending.
 
 ## Operator setup
 
@@ -68,7 +69,7 @@ restarts onboarding; `/cancel` discards the current onboarding conversation.
 
 | Command | Behavior |
 | --- | --- |
-| `/stock [page]` | Show estimated stock, days remaining, and full item UUIDs; five items per page. |
+| `/stock [page]` | Show estimated stock, days remaining, full item UUIDs and stored price/check status; five items per page. |
 | `/bought <uuid> <quantity>` | Add a purchase to the current stock and record it. |
 | `/setstock <uuid> <quantity>` | Replace current estimated stock with a correction. |
 | `/cancel` | Discard unfinished onboarding. |
@@ -77,7 +78,9 @@ For example, `/bought 12345678-1234-1234-1234-123456789abc 6` records six units.
 Copy the actual UUID from `/stock`; the example UUID has no special meaning.
 Estimated stock decreases with elapsed UTC time at the configured daily
 consumption rate and never drops below zero. `HOUSEHOLD_TIMEZONE` remains the
-household's local display/reminder timezone.
+household's local display/reminder timezone. Price timestamps use this timezone;
+merchant unit prices retain their own unit and do not convert stock quantities.
+See [operator product checks](product-checks.md).
 
 ## Delivery behavior
 

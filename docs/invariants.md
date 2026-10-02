@@ -1,7 +1,7 @@
 # Persistence invariants
 
-This is the M0 PostgreSQL foundation. It stores the inputs for later domain logic;
-it does not execute jobs, send Telegram messages, scrape offers, or calculate stock.
+This describes the PostgreSQL foundation and Telegram inventory slice. Scheduled
+price jobs and production scraping remain unimplemented.
 
 ## Ownership and identity
 
@@ -20,8 +20,8 @@ it does not execute jobs, send Telegram messages, scrape offers, or calculate st
   a nonblank `canonical_unit`. `daily_consumption` is positive, and `reserve_days`
   is a nonnegative integer. Persisted quantities and money use `NUMERIC(18, 6)`;
   construct inputs as `Decimal`, never through binary floating point. Values
-  beyond six fractional digits are rounded by PostgreSQL, so future input
-  validation must enforce the intended precision. Numeric NaN is rejected;
+  beyond six fractional digits are rounded by PostgreSQL; the Telegram boundary
+  rejects inputs outside the stored precision before mutation. Numeric NaN is rejected;
   the bounded precision also rejects infinity.
 - A purchase has a positive quantity and a purchase timestamp. Its optional
   price is the recorded purchase total, paired with a three-letter uppercase
@@ -67,12 +67,13 @@ it does not execute jobs, send Telegram messages, scrape offers, or calculate st
   must have `delivered_at`; other states must leave it null.
 - Work due time, payload, retry count, leases, and last error survive process
   restarts. Due-state/time and lease-expiry indexes support future workers.
-  There is no claim algorithm, worker, retry policy, or delivery implementation
-  in M0. Database checks constrain row shape, not allowed state transitions.
-- `telegram_update_receipt.update_id` is a nonnegative bigint primary key. A
-  future inbound handler must insert its receipt in the same transaction as
-  resulting domain changes and outbox rows. Uniqueness alone does not make a
-  handler idempotent if its side effects are committed separately.
+  The interactive reply sender claims only Telegram reply rows using SKIP LOCKED,
+  leases, bounded retry, and fenced completion. Scheduled jobs have no worker yet.
+  Database checks constrain row shape, not allowed state transitions.
+- `telegram_update_receipt.update_id` is a nonnegative bigint primary key. The
+  inbound handler inserts its receipt in the same transaction as domain changes,
+  persistent conversation state, and reply outbox rows. A household row lock
+  serializes mutations; duplicate receipts return without another mutation.
 - Outbox uniqueness prevents duplicate logical enqueueing; it cannot guarantee
   exactly-once delivery to Telegram across a crash after an external send.
 
@@ -83,3 +84,16 @@ trigger, independent of future ORM changes. Application startup does not create
 tables. Run `alembic upgrade head` to migrate and `alembic check` to detect model
 drift. A downgrade removes the schema and its stored data and is only intended
 for disposable development/test databases at this stage.
+
+## Telegram inventory transactions
+
+The single allowed private chat maps to a stable household UUID. A persisted
+conversation holds the current onboarding step; each accepted update advances it
+and queues a reply atomically. Confirmed items preserve the submitted URL and
+explicit variant query value. No HTTP request is made to that URL in this milestone.
+
+Stock is an anchored quantity. Elapsed days times daily consumption reduce the
+estimate, clamped at zero. Purchases add to that estimate and reset the anchor;
+manual corrections set a new anchor without fabricating a purchase. Both operations
+are serialized by the household lock and protected against duplicate update IDs.
+Different update IDs are processed in lock order, not sorted by their numeric ID.

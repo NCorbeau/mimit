@@ -73,7 +73,7 @@ def test_invalid_database_url_errors_do_not_leak_secrets(url: str) -> None:
 
 def test_settings_representation_masks_credentials() -> None:
     settings = make_settings(
-        TELEGRAM_BOT_TOKEN="token-secret", TELEGRAM_WEBHOOK_SECRET="webhook-secret"
+        TELEGRAM_BOT_TOKEN="123456:token-secret", TELEGRAM_WEBHOOK_SECRET="webhook-secret"
     )
     rendered = str(settings) + repr(settings) + settings.model_dump_json()
     for secret in ("database-password", "token-secret", "webhook-secret"):
@@ -114,7 +114,7 @@ def test_telegram_gate_and_allowlist_fail_closed() -> None:
 
 def test_complete_telegram_configuration_requires_both_identity_matches() -> None:
     settings = make_settings(
-        TELEGRAM_BOT_TOKEN="token-secret",
+        TELEGRAM_BOT_TOKEN="123456:token-secret",
         TELEGRAM_WEBHOOK_SECRET="webhook-secret",
         PUBLIC_BASE_URL="https://example.com/mimit/",
         TELEGRAM_ALLOWED_USER_ID=123,

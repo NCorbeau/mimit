@@ -29,6 +29,10 @@ log that property or dump settings as application telemetry.
 
 Run the liveness-only API with `uv run uvicorn mimit.api:create_app --factory`.
 `GET /healthz` returns `{"status":"ok"}`; it does not test database connectivity.
+`GET /readyz` checks database connectivity and reads a nonempty Alembic revision
+with a five-second deadline. It returns a generic 503 when unavailable. Railway
+uses this endpoint before directing traffic to a new deployment. It does not
+prove that the reply worker is healthy or that every schema object is correct.
 The factory accepts injected settings and a clock. Domain code should accept the
 `Clock` protocol instead of reading wall time directly. `SystemClock` returns UTC;
 `FrozenClock` rejects naive datetimes and normalizes aware instants to UTC. Persist

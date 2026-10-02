@@ -23,9 +23,9 @@ use its regular one-time price. Subscription pricing remains a separate offer ty
 ## Architecture
 
 Python 3.12+, FastAPI, SQLAlchemy 2, Alembic, PostgreSQL, asyncio, and httpx.
-One codebase will serve a public API and a private worker, with PostgreSQL holding
-both product state and durable work. Railway deployment is planned; no cloud
-resources are required for local development.
+One codebase serves a public API and a private worker, with PostgreSQL holding
+both product state and durable work. [Railway deployment](docs/deployment.md) uses
+the same Dockerfile for both processes; no cloud resources are required for local development.
 
 - A household owns consumables, which hold stock in a user-chosen canonical unit.
 - Each consumable has one offer source in v1; its exact submitted URL and variant
@@ -124,7 +124,7 @@ and cause a duplicate reply. Mimit does not claim exactly-once external delivery
 
 The developer-only [Zooplus spike](docs/zooplus-spike.md) investigates structured
 data via httpx. It is not the production URL-fetching boundary. Production SSRF
-protection, recurring price jobs, recommendations, and Railway deployment are later
+protection, recurring price jobs, and recommendations are later
 milestones. The reply sender is limited to interactive Telegram messages.
 There is no web frontend, queue broker, automatic purchasing, or general store
 scraper framework.

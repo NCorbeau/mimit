@@ -70,6 +70,13 @@ async def onboard(http: httpx.AsyncClient) -> None:
         assert response.status_code == 200, response.text
 
 
+async def test_readiness_with_migrated_postgresql(engine: AsyncEngine, database_url: str) -> None:
+    async with client(engine, database_url) as http:
+        response = await http.get("/readyz")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
+
 async def test_inventory_loop_retries_and_restart(engine: AsyncEngine, database_url: str) -> None:
     # Separate app instances prove conversation state survives an API restart.
     async with client(engine, database_url) as http:

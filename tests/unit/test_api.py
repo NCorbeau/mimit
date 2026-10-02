@@ -60,3 +60,24 @@ async def test_owned_engine_is_disposed_on_lifespan_exit(monkeypatch: pytest.Mon
     async with app.router.lifespan_context(app):
         engine.dispose.assert_not_awaited()
     engine.dispose.assert_awaited_once()
+
+
+@pytest.mark.parametrize("has_error", [False, True])
+async def test_readiness_failure_is_generic_and_liveness_stays_healthy(
+    has_error: bool,
+) -> None:
+    settings = Settings(_env_file=None, DATABASE_URL="postgresql://user:password@localhost/db")
+    session = AsyncMock(spec=AsyncSession)
+    session.scalar.return_value = None
+    if has_error:
+        session.scalar.side_effect = RuntimeError("secret database diagnostics")
+    session.__aenter__.return_value = session
+    sessions = MagicMock(spec=async_sessionmaker, return_value=session)
+    app = create_app(settings=settings, sessions=sessions)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/readyz")
+        assert response.status_code == 503
+        assert response.json() == {"status": "unavailable"}
+        assert (await client.get("/healthz")).status_code == 200

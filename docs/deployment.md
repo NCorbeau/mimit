@@ -50,10 +50,9 @@ delete them. Do not accept volume deletion, detachment, or placement changes as
 a routine release step. Secrets are configured separately in Railway variables;
 the infrastructure file contains references and nonsecret values only.
 
-The initial API deployment tracks `dev/mac-59-railway-deployment` with CI checks
-enabled. After the deployment PR merges, change its source branch to `main` in
-the infrastructure file and apply. Connect the worker to that same branch after
-its complete Telegram settings are supplied. For an explicit release:
+The initial API and worker deployments track `dev/mac-59-railway-deployment` with
+CI checks enabled. After the deployment PR merges, change both source branches
+to `main` in the infrastructure file and apply. For an explicit release:
 
 ```sh
 railway up --service mimit --detach
@@ -69,8 +68,8 @@ No PostgreSQL integration tests should run against the production account.
 
 ## Telegram activation
 
-Configure all five settings on the API together, then provide the same values
-(or references to the API's values) to the worker:
+Configure all five settings on the API together. The worker references the API's
+values so both processes use the same credentials and allowed identity:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET` (1–256 letters, digits, `_` or `-`)
@@ -78,7 +77,9 @@ Configure all five settings on the API together, then provide the same values
 - `TELEGRAM_ALLOWED_USER_ID`
 - `TELEGRAM_ALLOWED_CHAT_ID`
 
-Partial Telegram configuration fails startup. Before credentials are available,
+Partial Telegram configuration fails startup. The infrastructure file uses
+`preserve()` for existing secrets and allowed IDs; configure them in Railway
+before applying it to another environment. Before credentials are available,
 the API can run readiness/liveness only and the worker should remain undeployed.
 Set secrets through Railway's Variables UI or stdin (`railway variable set KEY
 --stdin --skip-deploys`), never as plaintext command arguments. Variable-list JSON

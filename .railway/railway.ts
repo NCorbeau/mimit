@@ -1,4 +1,4 @@
-import { defineRailway, github, postgres, project, service, volume } from "railway/iac";
+import { defineRailway, github, postgres, preserve, project, service, volume } from "railway/iac";
 
 export default defineRailway(() => {
   // Preserve the existing project's region and database volume.
@@ -19,16 +19,33 @@ export default defineRailway(() => {
     healthcheck: "/readyz",
     healthcheckTimeout: 120,
     replicas: { sfo: 1 },
-    deploy: { restartPolicyType: "ON_FAILURE", restartPolicyMaxRetries: 10 },
-    env: { DATABASE_URL: db.env.DATABASE_URL, HOUSEHOLD_TIMEZONE: "Europe/Warsaw", PORT: "8000" },
+    deploy: { drainingSeconds: 30 },
+    env: {
+      DATABASE_URL: db.env.DATABASE_URL,
+      HOUSEHOLD_TIMEZONE: "Europe/Warsaw",
+      PORT: "8000",
+      TELEGRAM_BOT_TOKEN: preserve(),
+      TELEGRAM_WEBHOOK_SECRET: preserve(),
+      PUBLIC_BASE_URL: "https://mimit-production.up.railway.app",
+      TELEGRAM_ALLOWED_USER_ID: preserve(),
+      TELEGRAM_ALLOWED_CHAT_ID: preserve(),
+    },
   });
   const worker = service("worker", {
-    // Connect the repository after the complete Telegram configuration is set.
+    source: github("NCorbeau/mimit", { branch: "dev/mac-59-railway-deployment", checkSuites: true }),
     build: { builder: "DOCKERFILE", dockerfilePath: "Dockerfile" },
     start: "python -m mimit.telegram.sender",
     replicas: { sfo: 1 },
-    deploy: { restartPolicyType: "ON_FAILURE", restartPolicyMaxRetries: 10 },
-    env: { DATABASE_URL: db.env.DATABASE_URL, HOUSEHOLD_TIMEZONE: "Europe/Warsaw" },
+    deploy: { drainingSeconds: 30, overlapSeconds: 0 },
+    env: {
+      DATABASE_URL: db.env.DATABASE_URL,
+      HOUSEHOLD_TIMEZONE: "Europe/Warsaw",
+      TELEGRAM_BOT_TOKEN: api.env.TELEGRAM_BOT_TOKEN,
+      TELEGRAM_WEBHOOK_SECRET: api.env.TELEGRAM_WEBHOOK_SECRET,
+      PUBLIC_BASE_URL: api.env.PUBLIC_BASE_URL,
+      TELEGRAM_ALLOWED_USER_ID: api.env.TELEGRAM_ALLOWED_USER_ID,
+      TELEGRAM_ALLOWED_CHAT_ID: api.env.TELEGRAM_ALLOWED_CHAT_ID,
+    },
   });
 
   return project("mimit", { resources: [api, worker, db, data] });

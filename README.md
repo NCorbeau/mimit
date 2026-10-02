@@ -7,8 +7,8 @@ they will run out. Price history will help it explain when buying makes sense.
 The local implementation includes Telegram onboarding, stock summaries, purchases,
 stock corrections, durable replies, PostgreSQL migrations, and separate fast and
 real PostgreSQL tests. Price monitoring and recommendations are later milestones.
-The foundation gate has passed; real-bot acceptance still requires configured
-Telegram credentials and an HTTPS endpoint.
+The foundation gate has passed. Railway hosts the API and interactive reply
+worker; full real-household acceptance still requires exercising the deployed flow.
 
 Send a product URL, then enter a name, current stock, canonical unit (for example,
 “pouch”), daily consumption, and reserve days. Confirm with `yes`. `/stock [page]` shows

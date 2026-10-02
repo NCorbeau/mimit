@@ -86,11 +86,12 @@ Set secrets through Railway's Variables UI or stdin (`railway variable set KEY
 contains credentials: do not paste or log its raw output.
 
 Deploy the API, verify `/readyz`, deploy the worker, then register the webhook
-using the included script inside the API container:
+using the included script with Railway's variables (the setup command does not
+connect to PostgreSQL, so it can run locally):
 
 ```sh
-railway ssh --service mimit -- python scripts/configure_telegram.py
-railway ssh --service mimit -- python scripts/configure_telegram.py --check
+railway run --no-local --service mimit -- uv run --locked python scripts/configure_telegram.py
+railway run --no-local --service mimit -- uv run --locked python scripts/configure_telegram.py --check
 ```
 
 Registration enables only message updates with one delivery connection and does

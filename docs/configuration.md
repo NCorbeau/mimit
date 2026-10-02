@@ -19,7 +19,7 @@ When optional values are configured, they are validated immediately. Setting any
 Telegram variable enables the bot and requires all five values; partial configuration
 fails startup. The secret must contain 1–256 ASCII letters, digits, underscores or
 hyphens. The webhook denies access unless both the user and private chat match.
-With all Telegram values omitted, the app exposes only the health endpoint.
+With all Telegram values omitted, the app exposes the liveness and readiness endpoints.
 See [Telegram setup](telegram.md) for webhook registration and the reply sender.
 
 Database credentials and Telegram secrets are masked in settings representations

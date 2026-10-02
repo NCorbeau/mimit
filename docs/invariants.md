@@ -1,7 +1,7 @@
 # Persistence invariants
 
-This describes the PostgreSQL foundation and Telegram inventory slice. Scheduled
-price jobs and production scraping remain unimplemented.
+This describes the PostgreSQL foundation, Telegram inventory and one-shot product
+checks. Scheduled price jobs remain unimplemented.
 
 ## Ownership and identity
 
@@ -28,7 +28,7 @@ price jobs and production scraping remain unimplemented.
   currency; `source` is optional free text, independent of the tracked offer.
 - A price observation is a timestamped snapshot of a source's normal one-time
   offer price. Subscription, coupon, and account-specific prices must not be
-  substituted for it by future extraction logic. Unknown prices can be null;
+  substituted for it by extraction logic. Unknown prices can be null;
   present prices require currency. Unit price requires currency and a nonblank
   unit. Prices cannot be negative. Availability is `available`, `unavailable`,
   or `unknown`.
@@ -90,10 +90,28 @@ for disposable development/test databases at this stage.
 The single allowed private chat maps to a stable household UUID. A persisted
 conversation holds the current onboarding step; each accepted update advances it
 and queues a reply atomically. Confirmed items preserve the submitted URL and
-explicit variant query value. No HTTP request is made to that URL in this milestone.
+explicit variant query value. No HTTP request is made to that URL by the webhook.
 
 Stock is an anchored quantity. Elapsed days times daily consumption reduce the
 estimate, clamped at zero. Purchases add to that estimate and reset the anchor;
 manual corrections set a new anchor without fabricating a purchase. Both operations
 are serialized by the household lock and protected against duplicate update IDs.
 Different update IDs are processed in lock order, not sorted by their numeric ID.
+
+## Product observation transactions
+
+A check reads the source identity and closes its session before network I/O.
+It extracts against the original submitted URL, including the selected variant,
+then uses a short transaction to lock and recheck source URL, variant, item and
+household ownership before appending. Changed sources cannot receive stale results.
+Independent concurrent checks may each append; there is no scheduled-job dedupe yet.
+
+Observations distinguish `success` from `failed`. Out-of-stock with no price is a
+successful availability observation; transport/extraction failure has only a safe
+error code and unknown availability. Failures never overwrite good history. Name,
+variant and bounded extraction metadata are immutable snapshots. A failed attempt
+with an invalid/oversized source variant stores a null variant snapshot while
+preserving the original source exactly. Old observations
+remain successful after migration without UPDATE. `/stock` reads one database
+snapshot for latest attempt, availability and last known price, and displays their
+observation times. It never fetches a merchant URL.

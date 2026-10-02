@@ -110,6 +110,7 @@ def create_webhook_router(
                 chat_id=chat_id,
                 text=text,
                 clock=clock,
+                timezone=settings.household_timezone,
             )
         except Exception:
             # SQLAlchemy exception strings/tracebacks can contain text and credentials.

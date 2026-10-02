@@ -229,3 +229,18 @@ class TelegramUpdateReceipt(Base):
 
     update_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     received_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class TelegramConversation(Base):
+    __tablename__ = "telegram_conversation"
+    __table_args__ = (
+        CheckConstraint(
+            "step IN ('name', 'stock', 'unit', 'daily', 'reserve', 'confirm')", name="step"
+        ),
+        CheckConstraint("jsonb_typeof(data) = 'object'", name="data_object"),
+    )
+
+    household_id: Mapped[UUID] = mapped_column(ForeignKey("household.id"), primary_key=True)
+    step: Mapped[str] = mapped_column(String(16))
+    data: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime())

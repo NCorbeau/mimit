@@ -1,6 +1,7 @@
 """Lazy, validated runtime configuration; importing this module reads no environment."""
 
 from functools import lru_cache
+from re import fullmatch
 from typing import Any, Self
 from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -87,6 +88,26 @@ class Settings(BaseSettings):
                 raise ValueError("configured secrets must be nonempty and contain no whitespace")
         return value
 
+    @field_validator("telegram_bot_token")
+    @classmethod
+    def validate_bot_token(cls, value: SecretStr | None) -> SecretStr | None:
+        if (
+            value is not None
+            and fullmatch(r"[0-9]+:[A-Za-z0-9_-]+", value.get_secret_value()) is None
+        ):
+            raise ValueError("TELEGRAM_BOT_TOKEN must have the token format supplied by BotFather")
+        return value
+
+    @field_validator("telegram_webhook_secret")
+    @classmethod
+    def validate_webhook_secret(cls, value: SecretStr | None) -> SecretStr | None:
+        if (
+            value is not None
+            and fullmatch(r"[A-Za-z0-9_-]{1,256}", value.get_secret_value()) is None
+        ):
+            raise ValueError("TELEGRAM_WEBHOOK_SECRET must contain 1-256 letters, digits, _ or -")
+        return value
+
     @field_validator("public_base_url")
     @classmethod
     def validate_public_base_url(cls, value: str | None) -> str | None:
@@ -132,7 +153,7 @@ class Settings(BaseSettings):
         return self.database_url_secret.get_secret_value()
 
     def require_telegram_configuration(self) -> None:
-        """Fail closed before any future Telegram runtime is enabled."""
+        """Fail closed before the Telegram runtime is enabled."""
         required = {
             "TELEGRAM_BOT_TOKEN": self.telegram_bot_token,
             "TELEGRAM_WEBHOOK_SECRET": self.telegram_webhook_secret,
@@ -143,6 +164,20 @@ class Settings(BaseSettings):
         missing = [name for name, value in required.items() if value is None]
         if missing:
             raise ValueError("Missing Telegram configuration: " + ", ".join(missing))
+
+    @property
+    def telegram_configured(self) -> bool:
+        """Any Telegram setting attempts to enable the complete runtime contract."""
+        return any(
+            value is not None
+            for value in (
+                self.telegram_bot_token,
+                self.telegram_webhook_secret,
+                self.public_base_url,
+                self.telegram_allowed_user_id,
+                self.telegram_allowed_chat_id,
+            )
+        )
 
     def allows_telegram_identity(self, *, user_id: int, chat_id: int) -> bool:
         """Both identifiers must match the configured single-user household."""

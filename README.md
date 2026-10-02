@@ -4,15 +4,21 @@ Mimit is a Telegram-first household replenishment assistant. It is being built t
 track everyday consumables—cat food, coffee, dishwasher tablets—and estimate when
 they will run out. Price history will help it explain when buying makes sense.
 
-The foundation currently provides PostgreSQL persistence, migrations, configuration,
-a deterministic clock, a FastAPI application shell, and separate fast and real
-PostgreSQL tests. **The Telegram bot, inventory interactions, price monitoring,
-and recommendations are not implemented yet.**
+The local implementation includes Telegram onboarding, stock summaries, purchases,
+stock corrections, durable replies, PostgreSQL migrations, and separate fast and
+real PostgreSQL tests. Price monitoring and recommendations are later milestones.
+The foundation gate has passed; real-bot acceptance still requires configured
+Telegram credentials and an HTTPS endpoint.
 
-The intended interaction is simple: send a product URL, enter stock and daily
-usage, check `/stock`, and record purchases. The first supported product source
-will be one exact Zooplus variant. Mimit will track its regular one-time price;
-subscription pricing is a separate offer type.
+Send a product URL, then enter a name, current stock, canonical unit (for example,
+“pouch”), daily consumption, and reserve days. Confirm with `yes`. `/stock [page]` shows
+estimated stock and days remaining (five items per page); `/bought <item-id> 6` records a purchase and
+`/setstock <item-id> 12` corrects the stock count. Quantities always use the item's
+canonical unit, including purchases; pack conversion is manual for now.
+
+URLs are saved without fetching in this milestone. The exact Zooplus acceptance
+variant has been checked in a developer spike; production price tracking will
+use its regular one-time price. Subscription pricing remains a separate offer type.
 
 ## Architecture
 
@@ -30,9 +36,10 @@ resources are required for local development.
 - Domain timestamps are supplied explicitly through an injected clock and stored
   as timezone-aware PostgreSQL timestamps.
 
-The schema is preparation for these behaviors. It does **not** implement job
-claiming, retries, inbound event processing, or outbound delivery. See
-[the invariants](docs/invariants.md) and [configuration contract](docs/configuration.md).
+Interactive replies use a small outbox sender with leases and bounded retries.
+Scheduled price jobs and recommendation notifications are not implemented. See
+[the invariants](docs/invariants.md), [configuration contract](docs/configuration.md),
+and [Telegram setup and use](docs/telegram.md).
 
 ## Local setup
 
@@ -51,7 +58,7 @@ uv run uvicorn mimit.api:create_app --factory --reload
 ```
 
 `GET http://127.0.0.1:8000/healthz` is a process health check, not a database readiness
-check. There is no webhook endpoint yet.
+check. With complete Telegram configuration, `/telegram/webhook` is enabled.
 
 PostgreSQL is bound only to `127.0.0.1:55439`. Its `mimit` username/password are
 local development values only. If that port is occupied, set `MIMIT_POSTGRES_PORT`
@@ -59,8 +66,9 @@ for Compose and update `DATABASE_URL` in `.env` to match. `docker compose down`
 stops the database and retains its named volume; add `--volumes` only to deliberately
 delete local data.
 
-No Telegram credentials are needed for foundation development. `.env` is ignored
-by Git. Runtime configuration uses environment variables and may load `.env` for
+No Telegram credentials are needed for tests or the health-only application.
+For the bot, follow [Telegram setup](docs/telegram.md), including the separate
+`uv run python -m mimit.telegram.sender` reply process. `.env` is ignored by Git. Runtime configuration uses environment variables and may load `.env` for
 local convenience. Production credentials belong in deployment variables.
 
 ## Verification
@@ -99,15 +107,24 @@ current application metadata to create tables.
 Database constraints enforce the modeled quantity, relationship, identity, and
 state invariants. Integration tests verify migrations from zero, round trips,
 constraint failures, rollback, and concurrent uniqueness at the database boundary.
-These tests do not yet establish end-to-end Telegram idempotency or worker safety.
+The HTTP integration tests exercise the authenticated webhook, persistent onboarding,
+concurrent duplicate deliveries, stock changes, and rollback after a database failure.
+Reply-sender tests use real PostgreSQL and simulated Telegram responses. No automated
+test sends messages to a real Telegram account.
 
-The design calls for receipt + domain mutation + outbox intent to commit together.
-Future outbound delivery will have at-least-once attempt semantics: a crash after a
-Telegram send can leave delivery ambiguous. Mimit will not claim exactly-once
-external delivery.
+Receipt, domain mutation, conversation state, and reply intent commit together.
+A household row lock serializes inventory updates. Duplicate deliveries with the
+same `update_id` cannot repeat a committed mutation. Different updates are processed
+in arrival/lock order; the API does not reorder them by Telegram ID. Webhook setup
+requests one delivery connection to reduce out-of-order conversations.
+
+Outbound delivery has at-least-once attempt semantics with bounded retries and a
+visible failed state. A crash after a Telegram send can leave delivery ambiguous
+and cause a duplicate reply. Mimit does not claim exactly-once external delivery.
 
 The developer-only [Zooplus spike](docs/zooplus-spike.md) investigates structured
 data via httpx. It is not the production URL-fetching boundary. Production SSRF
-protection, durable workers, recommendations, and deployment are later milestones.
+protection, recurring price jobs, recommendations, and Railway deployment are later
+milestones. The reply sender is limited to interactive Telegram messages.
 There is no web frontend, queue broker, automatic purchasing, or general store
 scraper framework.

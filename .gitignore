@@ -16,3 +16,6 @@ dist/
 
 .idea/
 node_modules/
+
+# Private planning references for agents
+.codex/project-docs.md

@@ -122,6 +122,35 @@ class PriceObservation(Base):
         CheckConstraint(
             "availability IN ('available', 'unavailable', 'unknown')", name="availability"
         ),
+        CheckConstraint("outcome IN ('success', 'failed')", name="outcome"),
+        CheckConstraint(
+            "(outcome = 'success' AND error_code IS NULL) OR "
+            "(outcome = 'failed' AND error_code IS NOT NULL AND "
+            "price IS NULL AND currency IS NULL AND unit_price IS NULL AND unit IS NULL "
+            "AND product_name IS NULL AND availability = 'unknown')",
+            name="outcome_shape",
+        ),
+        CheckConstraint(
+            "error_code IN ('unsafe_url', 'unsafe_address', 'redirect_limit', 'timeout', "
+            "'http_error', 'body_too_large', 'unsupported_content', 'transport_error', "
+            "'rate_limited', 'invalid_encoding', 'unsupported_source', 'invalid_jsonld', "
+            "'ambiguous_product', 'ambiguous_offer', 'invalid_price', 'identity_mismatch', "
+            "'invalid_product', 'no_product')",
+            name="error_code",
+        ),
+        CheckConstraint(
+            "product_name IS NULL OR (length(trim(product_name)) > 0 "
+            "AND length(product_name) <= 512)",
+            name="product_name",
+        ),
+        CheckConstraint(
+            "variant_snapshot IS NULL OR length(variant_snapshot) <= 1024", name="variant_snapshot"
+        ),
+        CheckConstraint(
+            "jsonb_typeof(extraction_metadata) = 'object' "
+            "AND octet_length(extraction_metadata::text) <= 4096",
+            name="extraction_metadata",
+        ),
         Index("ix_price_observation_source_observed", "offer_source_id", "observed_at"),
     )
 
@@ -133,6 +162,12 @@ class PriceObservation(Base):
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     unit: Mapped[str | None] = mapped_column(Text)
     availability: Mapped[str] = mapped_column(String(16))
+
+    outcome: Mapped[str] = mapped_column(String(16), server_default="success")
+    error_code: Mapped[str | None] = mapped_column(String(32))
+    product_name: Mapped[str | None] = mapped_column(Text)
+    variant_snapshot: Mapped[str | None] = mapped_column(Text)
+    extraction_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
 
 
 class Purchase(Base):

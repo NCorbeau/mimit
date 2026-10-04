@@ -6,7 +6,7 @@ they will run out. Price history will help it explain when buying makes sense.
 
 The local implementation includes Telegram onboarding, stock summaries, purchases,
 stock corrections, durable replies, PostgreSQL migrations, and separate fast and
-real PostgreSQL tests. Price monitoring and recommendations are later milestones.
+real PostgreSQL tests. One-shot price checks are available; recurring monitoring and recommendations are later milestones.
 The foundation gate has passed. Railway hosts the API and interactive reply
 worker; full real-household acceptance still requires exercising the deployed flow.
 
@@ -16,9 +16,10 @@ estimated stock and days remaining (five items per page); `/bought <item-id> 6` 
 `/setstock <item-id> 12` corrects the stock count. Quantities always use the item's
 canonical unit, including purchases; pack conversion is manual for now.
 
-URLs are saved without fetching in this milestone. The exact Zooplus acceptance
-variant has been checked in a developer spike; production price tracking will
-use its regular one-time price. Subscription pricing remains a separate offer type.
+Onboarding saves URLs without fetching. An operator can run a bounded one-shot
+check for an existing item; `/stock` shows stored price/availability and the latest
+check outcome. Prices are normal one-time offer prices; subscription pricing is
+excluded. See [product checks](docs/product-checks.md).
 
 ## Architecture
 
@@ -122,9 +123,9 @@ Outbound delivery has at-least-once attempt semantics with bounded retries and a
 visible failed state. A crash after a Telegram send can leave delivery ambiguous
 and cause a duplicate reply. Mimit does not claim exactly-once external delivery.
 
-The developer-only [Zooplus spike](docs/zooplus-spike.md) investigates structured
-data via httpx. It is not the production URL-fetching boundary. Production SSRF
-protection, recurring price jobs, and recommendations are later
-milestones. The reply sender is limited to interactive Telegram messages.
+The [production fetcher and extractor](docs/product-fetching.md) validate DNS at
+the actual connection boundary and extract exact-variant JSON-LD. The older
+[Zooplus spike](docs/zooplus-spike.md) remains historical developer evidence.
+Recurring price jobs and recommendations are later milestones. The reply sender is limited to interactive Telegram messages.
 There is no web frontend, queue broker, automatic purchasing, or general store
 scraper framework.

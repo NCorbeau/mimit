@@ -3,7 +3,7 @@
 import asyncio
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from time import perf_counter
@@ -15,7 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mimit.clock import Clock
-from mimit.db.models import Consumable, OfferSource, PriceObservation
+from mimit.db.models import Consumable, Household, OfferSource, PriceObservation
 from mimit.observability import elapsed_ms, log_event
 from mimit.products.types import (
     ErrorCode,
@@ -57,12 +57,22 @@ class PriceCheckResult:
 
 
 @dataclass(frozen=True)
-class _SourceSnapshot:
+class SourceSnapshot:
     source_id: UUID
     consumable_id: UUID
     household_id: UUID
-    url: str
-    variant: str | None
+    url: str = field(repr=False)
+    variant: str | None = field(repr=False)
+
+
+@dataclass(frozen=True)
+class PreparedCheck:
+    source: SourceSnapshot
+    result: PriceCheckResult
+    metadata: dict[str, str | int | bool | None]
+
+
+CHECK_TIMEOUT_SECONDS = 45
 
 
 def _safe_text(value: str, limit: int) -> bool:
@@ -73,7 +83,7 @@ def _safe_text(value: str, limit: int) -> bool:
     )
 
 
-def _validate(product: ExtractedProduct, source: _SourceSnapshot) -> None:
+def _validate(product: ExtractedProduct, source: SourceSnapshot) -> None:
     if not isinstance(product.name, str) or not _safe_text(product.name, 512):
         raise ProductCheckError(ErrorCode.INVALID_PRODUCT)
     if not isinstance(product.metadata, dict):
@@ -140,7 +150,7 @@ class ProductCheckService:
         self.fetcher = fetcher
         self.extractor = extractor
 
-    async def _snapshot(self, consumable_id: UUID, household_id: UUID | None) -> _SourceSnapshot:
+    async def snapshot(self, consumable_id: UUID, household_id: UUID | None) -> SourceSnapshot:
         async with self.sessions() as session:
             item = await session.get(Consumable, consumable_id)
             if item is None:
@@ -152,15 +162,13 @@ class ProductCheckService:
             )
             if source is None:
                 raise PriceCheckServiceError("not_found")
-            return _SourceSnapshot(
-                source.id, item.id, item.household_id, source.url, source.variant
-            )
+            return SourceSnapshot(source.id, item.id, item.household_id, source.url, source.variant)
 
-    async def check(
+    async def prepare(
         self, consumable_id: UUID, *, household_id: UUID | None = None
-    ) -> PriceCheckResult:
+    ) -> PreparedCheck:
         try:
-            source = await self._snapshot(consumable_id, household_id)
+            source = await self.snapshot(consumable_id, household_id)
         except SQLAlchemyError:
             raise PriceCheckServiceError("persistence_error") from None
         # The read session has closed before external code is called. Cancellation is
@@ -176,7 +184,8 @@ class ProductCheckService:
             outcome="started",
         )
         try:
-            page = await self.fetcher.fetch(source.url)
+            async with asyncio.timeout(CHECK_TIMEOUT_SECONDS):
+                page = await self.fetcher.fetch(source.url)
             log_event(
                 "product_fetch_result",
                 consumable_id=consumable_id,
@@ -206,6 +215,9 @@ class ProductCheckService:
                 duration_ms=elapsed_ms(started),
             )
             raise
+        except TimeoutError:
+            error = ProductCheckError(ErrorCode.TIMEOUT)
+            product = None
         except ProductCheckError as exc:
             error = exc
             product = None
@@ -255,57 +267,72 @@ class ProductCheckService:
             availability=product.availability if product is not None else "unknown",
             error_code=error.code if error is not None else None,
         )
+        return PreparedCheck(source, result, safe_metadata)
+
+    async def check(
+        self, consumable_id: UUID, *, household_id: UUID | None = None
+    ) -> PriceCheckResult:
+        prepared = await self.prepare(consumable_id, household_id=household_id)
         try:
             async with self.sessions.begin() as session:
-                # Lock only during append; freeze source and ownership until commit.
-                current = (
-                    await session.execute(
-                        select(OfferSource, Consumable)
-                        .join(Consumable, Consumable.id == OfferSource.consumable_id)
-                        .where(OfferSource.id == source.source_id)
-                        .with_for_update(of=(OfferSource, Consumable))
-                    )
-                ).one_or_none()
-                if current is None:
-                    raise PriceCheckServiceError("source_changed")
-                current_source, current_item = current
-                if (
-                    current_source.url != source.url
-                    or current_source.variant != source.variant
-                    or current_source.consumable_id != source.consumable_id
-                    or current_item.household_id != source.household_id
-                ):
-                    raise PriceCheckServiceError("source_changed")
-                session.add(
-                    PriceObservation(
-                        id=result.observation_id,
-                        offer_source_id=result.offer_source_id,
-                        observed_at=result.observed_at,
-                        outcome=result.outcome,
-                        error_code=result.error_code.value
-                        if result.error_code is not None
-                        else None,
-                        product_name=result.product_name,
-                        variant_snapshot=result.variant,
-                        price=result.price,
-                        currency=result.currency,
-                        unit_price=result.unit_price,
-                        unit=result.unit,
-                        availability=result.availability,
-                        extraction_metadata=safe_metadata,
-                    )
-                )
+                await lock_source(session, prepared.source)
+                append_observation(session, prepared)
         except SQLAlchemyError:
             raise PriceCheckServiceError("persistence_error") from None
         log_event(
             "product_observation_committed",
             consumable_id=consumable_id,
-            offer_source_id=source.source_id,
-            observation_id=result.observation_id,
-            outcome=result.outcome,
-            error_code=result.error_code,
+            offer_source_id=prepared.source.source_id,
+            observation_id=prepared.result.observation_id,
+            outcome=prepared.result.outcome,
+            error_code=prepared.result.error_code,
         )
-        return result
+        return prepared.result
+
+
+async def lock_source(session: AsyncSession, source: SourceSnapshot) -> Consumable:
+    """Freeze ownership and identity in the common household -> item -> source order."""
+    await session.scalar(
+        select(Household).where(Household.id == source.household_id).with_for_update()
+    )
+    item = await session.scalar(
+        select(Consumable).where(Consumable.id == source.consumable_id).with_for_update()
+    )
+    current = await session.scalar(
+        select(OfferSource).where(OfferSource.id == source.source_id).with_for_update()
+    )
+    if (
+        item is None
+        or current is None
+        or item.household_id != source.household_id
+        or current.consumable_id != source.consumable_id
+        or current.url != source.url
+        or current.variant != source.variant
+    ):
+        raise PriceCheckServiceError("source_changed")
+    return item
+
+
+def append_observation(session: AsyncSession, prepared: PreparedCheck) -> None:
+    """Append after caller verifies source and (for scheduled work) its live lease."""
+    result = prepared.result
+    session.add(
+        PriceObservation(
+            id=result.observation_id,
+            offer_source_id=result.offer_source_id,
+            observed_at=result.observed_at,
+            outcome=result.outcome,
+            error_code=result.error_code.value if result.error_code is not None else None,
+            product_name=result.product_name,
+            variant_snapshot=result.variant,
+            price=result.price,
+            currency=result.currency,
+            unit_price=result.unit_price,
+            unit=result.unit,
+            availability=result.availability,
+            extraction_metadata=prepared.metadata,
+        )
+    )
 
 
 async def check_product(

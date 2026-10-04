@@ -32,11 +32,15 @@ from mimit.inventory import (
     parse_quantity,
     stock_at,
 )
+from mimit.jobs.service import ensure_initial_check
+from mimit.observability import log_event
 from mimit.products.display import stock_price_summaries
+from mimit.recommendations import RecommendationConfig, evaluate_item, recommendation_for_item
+from mimit.telegram.text import bounded_text
 
 HELP = (
     "Send a product URL to add a consumable. I'll ask for its name, stock, unit, "
-    "daily consumption, and reserve days. Automatic price checks are pending.\n"
+    "daily consumption, and reserve days. Prices are checked daily.\n"
     "/stock [page] — estimated stock, stored prices and item IDs\n"
     "/bought <item-id> <quantity> — record a purchase\n"
     "/setstock <item-id> <quantity> — correct current stock\n"
@@ -80,10 +84,12 @@ async def process_message(
     text: str,
     clock: Clock,
     timezone: str = "Europe/Warsaw",
+    recommendation_config: RecommendationConfig | None = None,
 ) -> bool:
     """Process one authenticated message; False means it was already committed."""
     del user_id  # Authorization is deliberately owned by the inbound boundary.
     household_id = household_id_for_chat(chat_id)
+    config = recommendation_config or RecommendationConfig(allowed_chat_id=chat_id)
     async with sessions() as session, session.begin():
         receipt = await session.scalar(
             insert(TelegramUpdateReceipt)
@@ -102,7 +108,7 @@ async def process_message(
             select(Household).where(Household.id == household_id).with_for_update()
         )
         now = clock.now()
-        reply = await _handle(session, household_id, text.strip(), now, timezone)
+        reply = await _handle(session, household_id, text.strip(), now, timezone, config)
         session.add(
             NotificationOutbox(
                 dedupe_key=f"telegram:{update_id}:0",
@@ -111,11 +117,22 @@ async def process_message(
                 created_at=now,
             )
         )
+    log_event(
+        "telegram_message_committed",
+        update_id=update_id,
+        household_id=household_id,
+        outcome="committed",
+    )
     return True
 
 
 async def _handle(
-    session: AsyncSession, household_id: UUID, text: str, now: datetime, timezone: str
+    session: AsyncSession,
+    household_id: UUID,
+    text: str,
+    now: datetime,
+    timezone: str,
+    config: RecommendationConfig,
 ) -> str:
     if len(text) > 4096:
         return "That message is too long. Please use at most 4096 characters."
@@ -154,19 +171,21 @@ async def _handle(
         prices = await stock_price_summaries(session, [item.id for item in items], timezone)
         lines = [f"Estimated stock (page {page}/{total_pages}):"]
         for item in items:
+            decision = await recommendation_for_item(session, item, now, config)
             lines.append(
-                f"{item.name}: {format_quantity(stock_at(item, now))} {item.canonical_unit}; "
+                f"{bounded_text(item.name, 120)}: {format_quantity(stock_at(item, now))} "
+                f"{bounded_text(item.canonical_unit, 40)}; "
                 f"estimated {format_quantity(days_remaining(item, now))} days remaining; "
                 f"daily {format_quantity(item.daily_consumption)}; "
                 f"reserve {item.reserve_days} days\n"
-                f"ID: {item.id}\n{prices[item.id]}"
+                f"ID: {item.id}\n{prices[item.id]}\n{bounded_text(decision.summary, 180)}"
             )
         if page < total_pages:
             lines.append(f"Next page: /stock {page + 1}")
         lines.append("Use /bought <item-id> <quantity> or /setstock <item-id> <quantity>.")
         return "\n".join(lines)
     if command in {"/bought", "/setstock"}:
-        return await _change_stock(session, household_id, command, parts, now)
+        return await _change_stock(session, household_id, command, parts, now, config)
     if command.startswith("/"):
         return "Unknown command. Use /help for the available commands."
     if text.lower().startswith(("http://", "https://")):
@@ -185,12 +204,17 @@ async def _handle(
             conversation.step, conversation.data, conversation.updated_at = "name", data, now
         return "What friendly name should I use for this consumable? (Up to 120 characters.)"
     if conversation is not None:
-        return await _advance(session, conversation, text, now)
+        return await _advance(session, conversation, text, now, config)
     return "Send an http:// or https:// product URL to begin, or use /help."
 
 
 async def _change_stock(
-    session: AsyncSession, household_id: UUID, command: str, parts: list[str], now: datetime
+    session: AsyncSession,
+    household_id: UUID,
+    command: str,
+    parts: list[str],
+    now: datetime,
+    config: RecommendationConfig,
 ) -> str:
     if len(parts) != 3:
         return f"Usage: {command} <item-id> <quantity>. Find item IDs with /stock."
@@ -211,12 +235,20 @@ async def _change_stock(
     item.stock_updated_at = max(now, item.stock_updated_at)
     if command == "/bought":
         session.add(Purchase(consumable_id=item.id, quantity=quantity, purchased_at=now))
+    decision = await evaluate_item(session, item, now, config)
     action = "Purchase recorded" if command == "/bought" else "Stock corrected"
-    return f"{action}. {item.name}: {format_quantity(new_stock)} {item.canonical_unit}."
+    return (
+        f"{action}. {item.name}: {format_quantity(new_stock)} {item.canonical_unit}.\n"
+        f"{decision.summary}"
+    )
 
 
 async def _advance(
-    session: AsyncSession, conversation: TelegramConversation, text: str, now: datetime
+    session: AsyncSession,
+    conversation: TelegramConversation,
+    text: str,
+    now: datetime,
+    config: RecommendationConfig,
 ) -> str:
     data = dict(conversation.data)
     step = conversation.step
@@ -255,7 +287,7 @@ async def _advance(
                 f"Add {data['name']}?\nStock: {data['stock']} {data['unit']}\n"
                 f"Daily consumption: {data['daily']} {data['unit']}\n"
                 f"Reserve: {data['reserve']} days\n"
-                "Reply yes to save, or no to cancel. Automatic price checks are pending."
+                "Reply yes to save, or no to cancel. Daily price checks will begin after saving."
             )
         elif step == "confirm":
             if text.lower() in {"no", "n"}:
@@ -283,11 +315,15 @@ async def _advance(
                     created_at=now,
                 )
             )
+            await session.flush()
+            await ensure_initial_check(session, item.id, now)
+            decision = await evaluate_item(session, item, now, config)
             await session.delete(conversation)
             return (
                 f"Added {item.name}. ID: {item.id}\n"
                 f"Estimated {format_quantity(days_remaining(item, now))} days remaining.\n"
-                "Use /stock to check estimated stock. Automatic price checks are pending."
+                "Daily price checks scheduled. Use /stock for prices and advice.\n"
+                f"{decision.summary}"
             )
         else:
             raise RuntimeError("Unexpected persisted conversation step")

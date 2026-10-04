@@ -17,6 +17,8 @@ from mimit.db.models import (
     NotificationOutbox,
     OfferSource,
     Purchase,
+    RecommendationState,
+    ScheduledJob,
     TelegramUpdateReceipt,
 )
 from mimit.db.session import get_session_factory
@@ -101,7 +103,25 @@ async def test_inventory_loop_retries_and_restart(engine: AsyncEngine, database_
         assert (await session.scalars(select(OfferSource.url))).one() == URL
         assert (await session.scalars(select(OfferSource.variant))).one() == "2333304.0"
         assert await session.scalar(select(func.count()).select_from(TelegramUpdateReceipt)) == 7
-        assert await session.scalar(select(func.count()).select_from(NotificationOutbox)) == 7
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(NotificationOutbox)
+                .where(NotificationOutbox.dedupe_key.startswith("telegram:"))
+            )
+            == 7
+        )
+        assert await session.scalar(select(func.count()).select_from(ScheduledJob)) == 1
+        advice = await session.get(RecommendationState, item_id)
+        assert advice is not None and advice.state == "BUY SOON" and advice.generation == 1
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(NotificationOutbox)
+                .where(NotificationOutbox.dedupe_key.startswith("recommendation:"))
+            )
+            == 1
+        )
     async with client(engine, database_url, NOW + timedelta(days=2)) as http:
         responses = await asyncio.gather(
             *[
@@ -116,6 +136,14 @@ async def test_inventory_loop_retries_and_restart(engine: AsyncEngine, database_
         assert item is not None
         assert item.stock_quantity == Decimal("14")  # 12 - 2*2 + 6
         assert item.stock_updated_at == NOW + timedelta(days=2)
+        advice = await session.get(RecommendationState, item_id)
+        assert advice is not None and advice.state == "OK"
+        initial_advice = await session.scalar(
+            select(NotificationOutbox).where(
+                NotificationOutbox.dedupe_key.startswith("recommendation:")
+            )
+        )
+        assert initial_advice is not None and initial_advice.state == "cancelled"
         purchases = (await session.scalars(select(Purchase))).all()
         assert len(purchases) == 1 and purchases[0].quantity == Decimal("6")
         replies = (await session.scalars(select(NotificationOutbox))).all()
@@ -279,4 +307,11 @@ async def test_stock_pages_are_bounded_standalone_replies(
         assert "2 stock pages" in pages[2]
         assert "positive whole number" in pages[3]
         assert all(len(page.encode("utf-16-le")) // 2 <= 4096 for page in pages)
-        assert await session.scalar(select(func.count()).select_from(NotificationOutbox)) == 11
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(NotificationOutbox)
+                .where(NotificationOutbox.dedupe_key.startswith("telegram:"))
+            )
+            == 11
+        )

@@ -9,10 +9,10 @@ from uuid import UUID
 from mimit.clock import SystemClock
 from mimit.config import get_settings
 from mimit.db.session import create_engine, get_session_factory
+from mimit.observability import configure_logging
 from mimit.products.extractor import JsonLdExtractor
 from mimit.products.fetcher import SafeProductFetcher
 from mimit.products.service import PriceCheckServiceError, ProductCheckService
-from mimit.telegram.sender import install_log_redaction
 
 
 async def _run(consumable_id: UUID, household_id: UUID | None) -> int:
@@ -53,7 +53,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("consumable_id", type=UUID, help="Existing item UUID from /stock")
     parser.add_argument("--household-id", type=UUID, help="Optionally restrict household ownership")
     args = parser.parse_args(argv)
-    install_log_redaction()
+    configure_logging()
     try:
         return asyncio.run(_run(args.consumable_id, args.household_id))
     except PriceCheckServiceError as error:

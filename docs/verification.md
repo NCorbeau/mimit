@@ -93,3 +93,67 @@ Earlier pending live-inventory statements in this record are historical: user
 Telegram screenshots on 2 October verified onboarding, stock, purchase and
 correction, completing MAC-39/MAC-30. Deployment setup is recorded in merged
 PRs #3/#4; no deployment is performed by this product-tracking change.
+
+## Daily worker, explained advice and release review — 4 October 2026
+
+Verified locally at 21:52 UTC with Python 3.12.15 and PostgreSQL 17:
+
+- `make check`: Ruff lint/format, strict mypy (54 source files), **375 fast tests passed**.
+- `TEST_DATABASE_URL=… make test-integration`: **107 real-PostgreSQL tests passed**.
+  The harness creates and drops a randomly named local database; it never runs
+  concurrency or destructive schema tests against production.
+- Migration `0004_recommendations`: zero-to-head, metadata drift, downgrade and
+  re-upgrade checks passed as part of the PostgreSQL suite.
+- Persistence checks cover concurrent claims, lease expiry/reclaim, bounded
+  retries and final-attempt crashes, restart recovery, stable initial/daily job
+  identities, missed-slot coalescing, and atomic observation/recommendation/
+  notification/job settlement. Lease expiry and evaluation failure roll back
+  settlement writes. Merchant HTTP runs outside database transactions.
+- Recommendation checks cover exact depletion boundaries, the 30-day median,
+  at least three earlier comparable observations, 48-hour freshness, stock-only
+  fallback, actionable transitions, silent unchanged/recovery states, and
+  cancellation of superseded advice. Telegram onboarding commits its initial
+  job and recommendation with the receipt; purchases/corrections reevaluate
+  atomically. Duplicate update IDs preserve the existing idempotency guarantee.
+- Delivery checks cover current-time stock/price reevaluation before HTTP,
+  refreshed explanations, cancellation after claim, stale-lease fencing after
+  a real PostgreSQL lock wait, and rollback of all preflight writes when the
+  lease expires during reevaluation. Tests use HTTP mocks and do not send
+  real Telegram messages. Five maximum-size Unicode priced items still fit
+  Telegram's UTF-16 message limit.
+- Structured-log tests cover receipt, fetch/extraction, job, recommendation and
+  notification events, with strict scalar fields and suppression of bodies,
+  arbitrary URLs, exception details, bot tokens and database credentials.
+- Independent reviews covered the worker, recommendations, delivery lock order,
+  leases, transaction boundaries and published guarantees. Review fixes include
+  delivery-time price freshness, post-lock acknowledgement time, malformed
+  outbox payloads and bounded discount precision. No material findings remained
+  after independent re-review; rollback regressions verify the preflight fix.
+- Gitleaks 8.30.1 was downloaded from its official release and checksum-verified.
+  A synthetic credential sentinel verified detection. Redacted scans of all
+  local Git refs and an export of 89 non-ignored repository files reported no
+  leaks. Ignored credential files and caches were excluded from the export.
+  This records the scan's scope and result, not a guarantee of exhaustive detection.
+- A read-only Railway preview proposes eleven recommendation/worker variables
+  and the unified worker start command: zero resources added or destroyed.
+  The existing database volume, region and private/public service boundaries
+  are preserved. Production health/readiness and the current Telegram webhook
+  were checked; these checks precede deployment of this change.
+
+The daily cadence, three-prior-observation minimum, 48-hour freshness, quiet
+actionable notifications, queued-advice cancellation and stock-only unavailable
+offer behavior were explicitly confirmed by the user. Existing locked product
+and architecture choices are preserved.
+
+This completes repository implementation and review for
+[MAC-32](https://linear.app/mglownia/issue/MAC-32/build-durable-background-tracking),
+[MAC-33](https://linear.app/mglownia/issue/MAC-33/deliver-actionable-recommendations),
+[MAC-61](https://linear.app/mglownia/issue/MAC-61/add-structured-operational-logging)
+and [MAC-64](https://linear.app/mglownia/issue/MAC-64/perform-final-secret-and-reliability-review).
+The production release, a later observation from the next genuine daily run,
+the deployed explained stock reply, and a real purchase update remain required
+for [MAC-62](https://linear.app/mglownia/issue/MAC-62/run-real-zooplus-production-acceptance-flow).
+[MAC-34](https://linear.app/mglownia/issue/MAC-34/deploy-and-prove-production-acceptance)
+and its production milestone remain open until every required sub-issue and that
+household exit gate pass. No accelerated checks or fabricated purchases are
+counted as that evidence.

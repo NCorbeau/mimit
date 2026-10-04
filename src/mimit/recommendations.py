@@ -10,6 +10,7 @@ from decimal import Decimal
 from enum import StrEnum
 from fractions import Fraction
 from statistics import median
+from typing import TYPE_CHECKING
 from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import select, update
@@ -23,6 +24,10 @@ from mimit.db.models import (
     RecommendationState,
 )
 from mimit.inventory import exact_days_remaining
+from mimit.observability import log_event
+
+if TYPE_CHECKING:
+    from mimit.config import Settings
 
 
 class State(StrEnum):
@@ -38,6 +43,16 @@ class RecommendationConfig:
     minimum_observations: int = 3
     maximum_price_age_hours: int = 48
     discount_ratio: Decimal = Decimal("0.90")
+
+    @classmethod
+    def from_settings(cls, settings: "Settings") -> "RecommendationConfig":
+        return cls(
+            allowed_chat_id=settings.telegram_allowed_chat_id,
+            history_days=settings.recommendation_history_days,
+            minimum_observations=settings.recommendation_min_prior_observations,
+            maximum_price_age_hours=settings.recommendation_price_max_age_hours,
+            discount_ratio=Decimal(1) - settings.recommendation_discount_fraction,
+        )
 
     def __post_init__(self) -> None:
         if (
@@ -115,6 +130,12 @@ def price_evidence(
     latest = max(eligible, key=lambda row: (row.observed_at, row.id))
     if latest.outcome != "success":
         return PriceEvidence(fallback="latest price check failed")
+    if latest.availability != "available":
+        return PriceEvidence(
+            fallback="offer is out of stock"
+            if latest.availability == "unavailable"
+            else "offer availability is unknown"
+        )
     if latest.variant_snapshot != variant:
         return PriceEvidence(fallback="price variant does not match")
     if latest.unit_price is None or latest.currency is None or latest.unit is None:
@@ -136,6 +157,8 @@ def price_evidence(
     if len(preceding) < config.minimum_observations:
         return PriceEvidence(fallback="too little comparable price history")
     baseline = median(preceding)
+    if baseline <= 0:
+        return PriceEvidence(fallback="comparable median is zero")
     return PriceEvidence(current=latest.unit_price, median=baseline)
 
 
@@ -264,4 +287,12 @@ async def evaluate_item(
                 )
             )
     await session.flush()
+    log_event(
+        "recommendation_transition",
+        consumable_id=item.id,
+        household_id=item.household_id,
+        previous_state=previous.replace(" ", "_") if previous is not None else None,
+        state=decision.state.value.replace(" ", "_"),
+        outcome="evaluated",
+    )
     return decision

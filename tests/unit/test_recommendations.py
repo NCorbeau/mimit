@@ -27,6 +27,7 @@ def observation(price: str, days: int = 0, **kwargs: object) -> PriceObservation
         "unit": "kg",
         "variant_snapshot": "one",
         "outcome": "success",
+        "availability": "available",
     }
     values.update(kwargs)
     return PriceObservation(**values)
@@ -138,7 +139,23 @@ def test_configured_discount_has_explainable_reason() -> None:
     assert "20" in result.reason
 
 
-def test_no_history_and_zero_price_rule() -> None:
+def test_no_history_and_zero_median_are_honest() -> None:
     assert price_evidence([], "one", NOW).fallback == "no price checks yet"
     rows = [observation("0", day) for day in range(4)]
+    assert price_evidence(rows, "one", NOW).fallback == "comparable median is zero"
+
+
+@pytest.mark.parametrize("availability", ["unavailable", "unknown"])
+def test_unavailable_or_unknown_offer_uses_stock_only(availability: str) -> None:
+    rows = [observation("90", availability=availability)] + [
+        observation("100", day) for day in range(1, 4)
+    ]
+    evidence = price_evidence(rows, "one", NOW)
+    assert evidence.fallback is not None and "offer" in evidence.fallback
+    assert decide(Fraction(4), 3, evidence).state is State.BUY_SOON
+    assert decide(Fraction(3), 3, evidence).state is State.BUY_NOW
+
+
+def test_zero_current_price_with_positive_median_is_a_discount() -> None:
+    rows = [observation("0")] + [observation("100", day) for day in range(1, 4)]
     assert decide(Fraction(4), 3, price_evidence(rows, "one", NOW)).state is State.BUY_NOW

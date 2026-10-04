@@ -3,6 +3,7 @@
 import re
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
+from fractions import Fraction
 
 from mimit.db.models import Consumable
 
@@ -36,6 +37,19 @@ def stock_at(item: Consumable, now: datetime) -> Decimal:
         Decimal(0), item.stock_quantity - item.daily_consumption * seconds / Decimal(86400)
     )
     return remaining.quantize(QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def exact_days_remaining(item: Consumable, now: datetime) -> Fraction:
+    """Unrounded depletion for rule boundaries; display rounding must not decide."""
+    if now.utcoffset() is None or item.stock_updated_at.utcoffset() is None:
+        raise ValueError("Stock timestamps must be timezone-aware.")
+    elapsed = max(now - item.stock_updated_at, now - now)
+    microseconds = (elapsed.days * 86400 + elapsed.seconds) * 1000000 + elapsed.microseconds
+    return max(
+        Fraction(0),
+        Fraction(item.stock_quantity) / Fraction(item.daily_consumption)
+        - Fraction(microseconds, 86400 * 1000000),
+    )
 
 
 def format_quantity(value: Decimal) -> str:

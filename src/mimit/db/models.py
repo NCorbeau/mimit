@@ -230,7 +230,9 @@ class NotificationOutbox(Base):
     __table_args__ = (
         CheckConstraint("length(trim(dedupe_key)) > 0", name="dedupe_key_nonempty"),
         CheckConstraint("attempts >= 0", name="attempts_nonnegative"),
-        CheckConstraint("state IN ('pending', 'sending', 'sent', 'failed')", name="state"),
+        CheckConstraint(
+            "state IN ('pending', 'sending', 'sent', 'failed', 'cancelled')", name="state"
+        ),
         CheckConstraint(
             "(state = 'sending' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL) "
             "OR (state <> 'sending' AND lease_owner IS NULL AND lease_expires_at IS NULL)",
@@ -279,3 +281,19 @@ class TelegramConversation(Base):
     step: Mapped[str] = mapped_column(String(16))
     data: Mapped[dict[str, Any]] = mapped_column(JSONB)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class RecommendationState(Base):
+    __tablename__ = "recommendation_state"
+    __table_args__ = (
+        CheckConstraint("state IN ('OK', 'BUY SOON', 'BUY NOW')", name="state"),
+        CheckConstraint("generation >= 0", name="generation_nonnegative"),
+        CheckConstraint("length(trim(reason)) > 0", name="reason_nonempty"),
+    )
+
+    consumable_id: Mapped[UUID] = mapped_column(ForeignKey("consumable.id"), primary_key=True)
+    state: Mapped[str] = mapped_column(String(16))
+    reason: Mapped[str] = mapped_column(Text)
+    generation: Mapped[int] = mapped_column(Integer)
+    evaluated_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    changed_at: Mapped[datetime] = mapped_column(UTCDateTime())

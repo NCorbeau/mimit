@@ -9,17 +9,18 @@ current explained advice.
 ## Operator setup
 
 1. Create a bot with [BotFather](https://t.me/BotFather) and store its token in
-`TELEGRAM_BOT_TOKEN` in the local `.env` or deployment secret store. 2. Set
-`TELEGRAM_WEBHOOK_SECRET` to a random secret containing 1–256 letters,    digits,
-underscores, or hyphens. For example, generate one locally with    `uv run python -c
-'import secrets; print(secrets.token_urlsafe(32))'`. 3. Set `TELEGRAM_ALLOWED_USER_ID`
-and `TELEGRAM_ALLOWED_CHAT_ID` to the intended    numeric IDs. This implementation
-accepts private chats only. Verify the IDs    from a trusted Telegram update before
-registering the webhook; usernames are    not identifiers. An unconfigured or mismatched
-user/chat cannot mutate stock. 4. Set `PUBLIC_BASE_URL` to your externally reachable
-HTTPS base URL. The webhook    path is `/telegram/webhook`; TLS termination may forward
-to the local API.    Configure `DATABASE_URL`, run `uv run alembic upgrade head`, then
-start both    processes with the same settings:
+   `TELEGRAM_BOT_TOKEN` in the local `.env` or deployment secret store.
+2. Set `TELEGRAM_WEBHOOK_SECRET` to a random secret containing 1–256 letters,
+   digits, underscores, or hyphens. For example, generate one locally with
+   `uv run python -c 'import secrets; print(secrets.token_urlsafe(32))'`.
+3. Set `TELEGRAM_ALLOWED_USER_ID` and `TELEGRAM_ALLOWED_CHAT_ID` to the intended
+   numeric IDs. This implementation accepts private chats only. Verify the IDs
+   from a trusted Telegram update before registering the webhook; usernames are
+   not identifiers. An unconfigured or mismatched user/chat cannot mutate stock.
+4. Set `PUBLIC_BASE_URL` to your externally reachable HTTPS base URL. The webhook
+   path is `/telegram/webhook`; TLS termination may forward to the local API.
+   Configure `DATABASE_URL`, run `uv run alembic upgrade head`, then start both
+   processes with the same settings:
 
    ```sh
    uv run uvicorn mimit.api:create_app --factory --host 0.0.0.0 --port 8000
@@ -54,10 +55,12 @@ disposed.
 Send `/start` or `/help` to see the commands. Send a product URL to begin adding a
 consumable. The bot asks for:
 
-1. A name, such as `Cat food`. 2. Current stock, such as `12`. 3. A unit used
-consistently, such as `cans`, `g`, or `kg`. 4. Daily consumption greater than zero, such
-as `0.5`. 5. Reserve days as a whole number, such as `3`. 6. Final confirmation:
-`yes`/`y` saves, and `no`/`n` cancels.
+1. A name, such as `Cat food`.
+2. Current stock, such as `12`.
+3. A unit used consistently, such as `cans`, `g`, or `kg`.
+4. Daily consumption greater than zero, such as `0.5`.
+5. Reserve days as a whole number, such as `3`.
+6. Final confirmation: `yes`/`y` saves, and `no`/`n` cancels.
 
 Quantities use a decimal dot and up to six meaningful fractional places. Stock can be
 zero; daily consumption and purchase quantities must be positive. Units are labels, and
@@ -92,7 +95,10 @@ Onboarding, `/bought` and `/setstock` evaluate the item in the same transaction 
 inventory change. The worker reevaluates after completed daily checks. `/stock` reads
 current advice without queuing a notification. Entry into BUY SOON or BUY NOW creates an
 alert; unchanged states and recovery to OK remain silent. A new state cancels superseded
-queued advice, but a request already in flight can still arrive.
+queued advice. Immediately before delivery, the sender reevaluates stock and price
+freshness: changed advice cancels the old intent and applies the same transition rules,
+while unchanged advice refreshes its explanation. A request already in flight can still
+arrive.
 
 ## Delivery behavior
 
@@ -115,7 +121,7 @@ during operator checks. External sends cannot be guaranteed exactly once: a cras
 Telegram accepts a message but before the sender records success can result in a
 repeated reply.
 
- Failed notifications remain inspectable in PostgreSQL:
+Failed notifications remain inspectable in PostgreSQL:
 
 ```sql
 SELECT id, attempts, last_error FROM notification_outbox WHERE state = 'failed';

@@ -141,7 +141,9 @@ async def run(*, once: bool = False) -> None:
                 return await run_once(sessions, clock, checker, evaluator=evaluate)
 
             async def send() -> object:
-                return await send_once(sessions, clock, sender)
+                return await send_once(
+                    sessions, clock, sender, recommendation_config=recommendation_config
+                )
 
             if once:
                 await schedule()

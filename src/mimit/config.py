@@ -1,5 +1,6 @@
 """Lazy, validated runtime configuration; importing this module reads no environment."""
 
+from decimal import Decimal
 from functools import lru_cache
 from re import fullmatch
 from typing import Any, Self
@@ -37,6 +38,31 @@ class Settings(BaseSettings):
         default=None, alias="TELEGRAM_ALLOWED_USER_ID", gt=0
     )
     telegram_allowed_chat_id: int | None = Field(default=None, alias="TELEGRAM_ALLOWED_CHAT_ID")
+
+    worker_poll_seconds: float = Field(
+        default=1.0, alias="WORKER_POLL_SECONDS", gt=0, le=60, allow_inf_nan=False
+    )
+    worker_shutdown_grace_seconds: float = Field(
+        default=30.0, alias="WORKER_SHUTDOWN_GRACE_SECONDS", gt=0, le=120, allow_inf_nan=False
+    )
+    worker_price_concurrency: int = Field(default=2, alias="WORKER_PRICE_CONCURRENCY", ge=1, le=8)
+    recommendation_history_days: int = Field(
+        default=30, alias="RECOMMENDATION_HISTORY_DAYS", ge=1, le=365
+    )
+    recommendation_discount_fraction: Decimal = Field(
+        default=Decimal("0.10"),
+        alias="RECOMMENDATION_DISCOUNT_FRACTION",
+        gt=0,
+        lt=1,
+        allow_inf_nan=False,
+        decimal_places=6,
+    )
+    recommendation_min_prior_observations: int = Field(
+        default=3, alias="RECOMMENDATION_MIN_PRIOR_OBSERVATIONS", ge=3, le=365
+    )
+    recommendation_price_max_age_hours: int = Field(
+        default=48, alias="RECOMMENDATION_PRICE_MAX_AGE_HOURS", ge=1, le=720
+    )
 
     @model_validator(mode="wrap")
     @classmethod

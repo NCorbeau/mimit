@@ -197,6 +197,7 @@ async def test_notification_result_has_identity_outcome_duration_without_message
         {"chat_id": 17, "text": "private household message"},
     )
     monkeypatch.setattr(delivery, "claim_next", AsyncMock(return_value=claim))
+    monkeypatch.setattr(delivery, "preflight", AsyncMock(return_value=claim.payload))
     monkeypatch.setattr(delivery, "acknowledge", AsyncMock(return_value=True))
     sender = AsyncMock(spec=delivery.TelegramSender)
     sender.send.return_value = delivery.SendResult(outcome, error, 12)
@@ -220,6 +221,7 @@ async def test_notification_cancel_logs_recoverable_attempt_without_exception(
     clock = FrozenClock(datetime(2026, 10, 4, tzinfo=UTC))
     claim = delivery.Claim(uuid4(), str(uuid4()), 1, clock.now() + timedelta(seconds=60), {})
     monkeypatch.setattr(delivery, "claim_next", AsyncMock(return_value=claim))
+    monkeypatch.setattr(delivery, "preflight", AsyncMock(return_value=claim.payload))
     sender = AsyncMock(spec=delivery.TelegramSender)
     sender.send.side_effect = asyncio.CancelledError("private exception")
     with pytest.raises(asyncio.CancelledError):
@@ -301,22 +303,17 @@ async def test_product_stages_have_safe_ids_and_only_log_commit_after_persistenc
 
     from sqlalchemy.exc import SQLAlchemyError
 
-    from mimit.db.models import Consumable, OfferSource
-    from mimit.products.service import PriceCheckServiceError, ProductCheckService, _SourceSnapshot
+    from mimit.db.models import Consumable
+    from mimit.products import service as product_service
+    from mimit.products.service import PriceCheckServiceError, ProductCheckService, SourceSnapshot
     from mimit.products.types import ErrorCode, ExtractedProduct, FetchedPage, ProductCheckError
 
     caplog.set_level(logging.INFO, logger="mimit.events")
     item_id, source_id, household_id = uuid4(), uuid4(), uuid4()
     url = "https://merchant.example/product?token=private-url-secret"
-    source = _SourceSnapshot(source_id, item_id, household_id, url, None)
+    source = SourceSnapshot(source_id, item_id, household_id, url, None)
     session = AsyncMock(spec=AsyncSession)
     session.__aenter__.return_value = session
-    result = MagicMock()
-    result.one_or_none.return_value = (
-        OfferSource(id=source_id, consumable_id=item_id, url=url, variant=None),
-        Consumable(id=item_id, household_id=household_id),
-    )
-    session.execute.return_value = result
     if failure_stage == "commit":
         session.__aexit__.side_effect = SQLAlchemyError(
             "raw database credentials private-db-secret"
@@ -343,7 +340,12 @@ async def test_product_stages_have_safe_ids_and_only_log_commit_after_persistenc
     service = ProductCheckService(
         sessions, FrozenClock(datetime(2026, 10, 4, tzinfo=UTC)), fetcher, extractor
     )
-    monkeypatch.setattr(service, "_snapshot", AsyncMock(return_value=source))
+    monkeypatch.setattr(service, "snapshot", AsyncMock(return_value=source))
+    monkeypatch.setattr(
+        product_service,
+        "lock_source",
+        AsyncMock(return_value=Consumable(id=item_id, household_id=household_id)),
+    )
     if failure_stage == "commit":
         with pytest.raises(PriceCheckServiceError, match="persistence_error"):
             await service.check(item_id)

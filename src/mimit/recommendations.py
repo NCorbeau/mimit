@@ -209,6 +209,11 @@ def _bounded_text(value: str, limit: int = 512) -> str:
     return "".join(result)
 
 
+def notification_text(item: Consumable, decision: Decision) -> str:
+    """Use the same bounded explanation when creating and refreshing advice."""
+    return f"{_bounded_text(item.name)} — {decision.summary}\nItem: {item.id}"
+
+
 async def evaluate_item(
     session: AsyncSession,
     item: Consumable,
@@ -250,7 +255,7 @@ async def evaluate_item(
             .values(
                 payload=NotificationOutbox.payload.op("||")(
                     {
-                        "text": f"{_bounded_text(item.name)} — {decision.summary}\nItem: {item.id}",
+                        "text": notification_text(item, decision),
                     }
                 )
             )
@@ -280,7 +285,7 @@ async def evaluate_item(
                     dedupe_key=f"recommendation:{item.id}:{stored.generation}",
                     payload={
                         "chat_id": config.allowed_chat_id,
-                        "text": f"{_bounded_text(item.name)} — {decision.summary}\nItem: {item.id}",
+                        "text": notification_text(item, decision),
                     },
                     run_at=now,
                     created_at=now,

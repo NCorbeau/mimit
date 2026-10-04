@@ -160,5 +160,10 @@ as a transition. Unchanged states and recovery to OK create no new notification.
 transition cancels superseded pending/sending recommendation rows and clears their
 leases; cancelled rows cannot be reclaimed or acknowledged by an old owner. A request
 already in flight can still arrive at Telegram. Updating the rationale within the same
-state can refresh a pending message without creating another notification. Outbox dedupe
-prevents duplicate logical intents, not duplicate external delivery across a crash.
+state can refresh a pending message without creating another notification. Before HTTP,
+recommendation delivery locks household, item and outbox in that order, verifies a live
+lease, and reevaluates current stock and price freshness. A changed generation cancels
+the old intent; an unchanged state refreshes its sending payload. Expiry during this
+preflight rolls back its changes. Locks and the transaction are released before HTTP;
+acknowledgement reads the clock after obtaining the outbox lock. Outbox dedupe prevents
+duplicate logical intents, not duplicate external delivery across a crash.

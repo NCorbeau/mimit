@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mimit.api import create_app
 from mimit.clock import FrozenClock
 from mimit.config import Settings
+from mimit.recommendations import RecommendationConfig
 from mimit.telegram import webhook
 
 
@@ -89,6 +90,7 @@ async def test_new_and_duplicate_updates_acknowledge_after_processing(
         text="/stock",
         clock=FrozenClock(datetime(2026, 10, 2, tzinfo=UTC)),
         timezone="Europe/Warsaw",
+        recommendation_config=RecommendationConfig(allowed_chat_id=456),
     )
 
 

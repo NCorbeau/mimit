@@ -1,10 +1,10 @@
-"""Minimal M1 interactive-reply outbox delivery, not a scheduled-job worker.
+"""Interactive replies and recommendation outbox delivery.
 
 Claims commit before HTTP; acknowledgements require the same unexpired lease.
 Cancellation/crash leaves a lease for recovery. Telegram sendMessage has no
 idempotency key: an accepted send followed by a crash/lost response can be sent
 again after lease expiry. This is bounded at-least-once intent processing, not an
-exactly-once external delivery guarantee. M4 recommendation delivery is deferred.
+exactly-once external delivery guarantee.
 
 Bot API contract: https://core.telegram.org/bots/api#sendmessage and
 https://core.telegram.org/bots/api#responseparameters.
@@ -25,19 +25,21 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from time import perf_counter
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
 from pydantic import SecretStr
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mimit.clock import Clock, SystemClock
 from mimit.config import get_settings
-from mimit.db.models import NotificationOutbox
+from mimit.db.models import Consumable, Household, NotificationOutbox, RecommendationState
 from mimit.db.session import create_engine, get_session_factory
 from mimit.observability import configure_logging, elapsed_ms, log_event
 from mimit.observability import install_log_redaction as install_log_redaction
+from mimit.recommendations import RecommendationConfig, State, evaluate_item, notification_text
+from mimit.telegram.text import valid_message
 
 MAX_ATTEMPTS = 5
 LEASE_SECONDS = 60
@@ -78,6 +80,7 @@ class Claim:
     attempts: int
     expires_at: datetime
     payload: dict[str, Any] = field(repr=False)
+    dedupe_key: str = ""
 
 
 class TelegramSender:
@@ -93,14 +96,17 @@ class TelegramSender:
         self._client = client
         install_log_redaction()
 
+    @property
+    def allowed_chat_id(self) -> int:
+        return self._allowed_chat_id
+
     async def send(self, payload: dict[str, Any]) -> SendResult:
         chat_id, text = payload.get("chat_id"), payload.get("text")
         if (
             set(payload) != {"chat_id", "text"}
             or type(chat_id) is not int
             or chat_id != self._allowed_chat_id
-            or not isinstance(text, str)
-            or not 1 <= len(text) <= 4096
+            or not valid_message(text)
         ):
             return SendResult(Outcome.FAILED, ErrorCode.INVALID_PAYLOAD)
         endpoint = f"https://api.telegram.org/bot{self._token.get_secret_value()}/sendMessage"
@@ -172,8 +178,10 @@ async def claim_next(sessions: async_sessionmaker[AsyncSession], clock: Clock) -
         and_(NotificationOutbox.state == "pending", NotificationOutbox.run_at <= now),
         and_(NotificationOutbox.state == "sending", NotificationOutbox.lease_expires_at <= now),
     )
-    # This sender handles only interactive replies. Recommendation intents remain M4.
-    scope = NotificationOutbox.dedupe_key.startswith("telegram:")
+    scope = or_(
+        NotificationOutbox.dedupe_key.startswith("telegram:"),
+        NotificationOutbox.dedupe_key.startswith("recommendation:"),
+    )
     async with sessions.begin() as session:
         row = await session.scalar(
             select(NotificationOutbox)
@@ -196,7 +204,12 @@ async def claim_next(sessions: async_sessionmaker[AsyncSession], clock: Clock) -
         row.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
         row.attempts += 1
         claim = Claim(
-            row.id, row.lease_owner, row.attempts, row.lease_expires_at, dict(row.payload)
+            row.id,
+            row.lease_owner,
+            row.attempts,
+            row.lease_expires_at,
+            dict(row.payload) if isinstance(row.payload, dict) else {},
+            row.dedupe_key,
         )
     return claim
 
@@ -209,41 +222,147 @@ async def acknowledge(
     *,
     jitter: Callable[[float, float], float] = random.uniform,
 ) -> bool:
-    now = clock.now()
-    if result.outcome is Outcome.SENT:
-        values: dict[str, Any] = {"state": "sent", "delivered_at": now, "last_error": None}
-    elif result.outcome is Outcome.FAILED or claim.attempts >= MAX_ATTEMPTS:
-        error = ErrorCode.EXHAUSTED if result.outcome is Outcome.RETRY else result.error
-        values = {"state": "failed", "last_error": error.value if error else None}
-    else:
-        base_delay = min(5 * 2 ** (claim.attempts - 1), 300)
-        delay = max(min(base_delay + jitter(0, base_delay), 300), result.retry_after)
-        values = {
-            "state": "pending",
-            "run_at": now + timedelta(seconds=delay),
-            "last_error": result.error.value if result.error else None,
-        }
+    values: dict[str, Any] = {}
     async with sessions.begin() as session:
-        row_id = await session.scalar(
-            update(NotificationOutbox)
-            .where(
-                NotificationOutbox.id == claim.id,
-                NotificationOutbox.state == "sending",
-                NotificationOutbox.lease_owner == claim.owner,
-                NotificationOutbox.lease_expires_at > now,
-            )
-            .values(**values, lease_owner=None, lease_expires_at=None)
-            .returning(NotificationOutbox.id)
+        row = await session.scalar(
+            select(NotificationOutbox).where(NotificationOutbox.id == claim.id).with_for_update()
         )
+        # Read time after acquiring the lock: waiting cannot preserve an expired lease.
+        now = clock.now()
+        accepted = (
+            row is not None
+            and row.state == "sending"
+            and row.lease_owner == claim.owner
+            and row.lease_expires_at is not None
+            and row.lease_expires_at > now
+        )
+        if accepted:
+            assert row is not None
+            if result.outcome is Outcome.SENT:
+                values = {"state": "sent", "delivered_at": now, "last_error": None}
+            elif result.outcome is Outcome.FAILED or claim.attempts >= MAX_ATTEMPTS:
+                error = ErrorCode.EXHAUSTED if result.outcome is Outcome.RETRY else result.error
+                values = {"state": "failed", "last_error": error.value if error else None}
+            else:
+                base_delay = min(5 * 2 ** (claim.attempts - 1), 300)
+                delay = max(min(base_delay + jitter(0, base_delay), 300), result.retry_after)
+                values = {
+                    "state": "pending",
+                    "run_at": now + timedelta(seconds=delay),
+                    "last_error": result.error.value if result.error else None,
+                }
+            for key, value in values.items():
+                setattr(row, key, value)
+            row.lease_owner = None
+            row.lease_expires_at = None
     log_event(
         "notification_acknowledged",
         notification_id=claim.id,
         attempt=claim.attempts,
-        outcome=values["state"] if row_id is not None else "stale",
+        outcome=values["state"] if accepted else "stale",
         error_code=values.get("last_error"),
-        acknowledged=row_id is not None,
+        acknowledged=accepted,
     )
-    return row_id is not None
+    return accepted
+
+
+class _ExpiredPreflight(Exception):
+    pass
+
+
+def _owns_live_claim(row: NotificationOutbox | None, claim: Claim, now: datetime) -> bool:
+    return (
+        row is not None
+        and row.state == "sending"
+        and row.lease_owner == claim.owner
+        and row.lease_expires_at is not None
+        and row.lease_expires_at > now
+    )
+
+
+async def preflight(
+    sessions: async_sessionmaker[AsyncSession],
+    clock: Clock,
+    claim: Claim,
+    config: RecommendationConfig | None = None,
+) -> dict[str, Any] | None:
+    """Refresh actionable advice and fence cancellation before releasing locks for HTTP.
+
+    Empty payloads become terminal invalid_payload failures. None means the claim
+    was cancelled or expired. The household lock uses the same order as inventory
+    and scheduled checks, so every current recommendation sees committed inputs.
+    """
+    recommendation = claim.dedupe_key.startswith("recommendation:")
+    item_id: UUID | None = None
+    generation: int | None = None
+    if recommendation:
+        parts = claim.dedupe_key.split(":")
+        if len(parts) == 3 and re.fullmatch(r"[1-9][0-9]{0,9}", parts[2]):
+            try:
+                item_id, generation = UUID(parts[1]), int(parts[2])
+            except ValueError:
+                pass
+        if item_id is not None and claim.dedupe_key != f"recommendation:{item_id}:{generation}":
+            item_id = None
+    try:
+        async with sessions.begin() as session:
+            item = None
+            if recommendation and item_id is not None and config is not None:
+                if config.allowed_chat_id is not None:
+                    household_id = uuid5(
+                        NAMESPACE_URL, f"mimit:telegram:chat:{config.allowed_chat_id}"
+                    )
+                    await session.scalar(
+                        select(Household).where(Household.id == household_id).with_for_update()
+                    )
+                    item = await session.scalar(
+                        select(Consumable)
+                        .where(Consumable.id == item_id, Consumable.household_id == household_id)
+                        .with_for_update()
+                    )
+            row = await session.scalar(
+                select(NotificationOutbox)
+                .where(NotificationOutbox.id == claim.id)
+                .with_for_update()
+            )
+            if not _owns_live_claim(row, claim, clock.now()):
+                return None
+            assert row is not None
+            payload = dict(row.payload) if isinstance(row.payload, dict) else {}
+            if recommendation:
+                if (
+                    item is None
+                    or config is None
+                    or row.dedupe_key != claim.dedupe_key
+                    or set(payload) != {"chat_id", "text"}
+                    or type(payload.get("chat_id")) is not int
+                    or payload["chat_id"] != config.allowed_chat_id
+                ):
+                    return {}
+                if await session.get(RecommendationState, item.id) is None:
+                    return {}
+                decision = await evaluate_item(session, item, clock.now(), config)
+                if clock.now() >= claim.expires_at:
+                    raise _ExpiredPreflight
+                current = await session.get(RecommendationState, item.id)
+                assert current is not None
+                if current.generation != generation or decision.state is State.OK:
+                    row.state = "cancelled"
+                    row.last_error = "recommendation_superseded"
+                    row.lease_owner = None
+                    row.lease_expires_at = None
+                    return None
+                payload = {
+                    "chat_id": config.allowed_chat_id,
+                    "text": notification_text(item, decision),
+                }
+                row.payload = payload
+            # Roll back refreshes too if the lease expires during database work.
+            if not _owns_live_claim(row, claim, clock.now()):
+                raise _ExpiredPreflight
+        return payload
+    except _ExpiredPreflight:
+        return None
 
 
 async def send_once(
@@ -252,6 +371,7 @@ async def send_once(
     sender: TelegramSender,
     *,
     jitter: Callable[[float, float], float] = random.uniform,
+    recommendation_config: RecommendationConfig | None = None,
 ) -> bool:
     claim = await claim_next(sessions, clock)
     if claim is None:
@@ -261,9 +381,17 @@ async def send_once(
     )
     if clock.now() >= claim.expires_at:
         return True  # Lease expired before I/O; recovery belongs to a later claim.
+    if claim.dedupe_key.startswith("recommendation:") and recommendation_config is None:
+        recommendation_config = RecommendationConfig(allowed_chat_id=sender.allowed_chat_id)
+    payload = await preflight(sessions, clock, claim, recommendation_config)
+    if payload is None:
+        log_event("notification_send_result", notification_id=claim.id, outcome="superseded")
+        return True
+    if clock.now() >= claim.expires_at:
+        return True
     started = perf_counter()
     try:
-        result = await sender.send(claim.payload)
+        result = await sender.send(payload)
     except asyncio.CancelledError:
         log_event(
             "notification_send_result",
@@ -316,7 +444,12 @@ async def run(*, once: bool) -> None:
             sessions, clock = get_session_factory(engine), SystemClock()
             while True:
                 try:
-                    worked = await send_once(sessions, clock, sender)
+                    worked = await send_once(
+                        sessions,
+                        clock,
+                        sender,
+                        recommendation_config=RecommendationConfig.from_settings(settings),
+                    )
                 except Exception:
                     # DB errors may include payload/credentials. Retry without rendering details.
                     log_event(
@@ -334,8 +467,8 @@ async def run(*, once: bool) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Deliver pending M1 Telegram interactive replies")
-    parser.add_argument("--once", action="store_true", help="Process at most one available reply")
+    parser = argparse.ArgumentParser(description="Deliver pending Telegram replies and advice")
+    parser.add_argument("--once", action="store_true", help="Process at most one available message")
     args = parser.parse_args()
     try:
         asyncio.run(run(once=args.once))

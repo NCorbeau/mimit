@@ -16,6 +16,13 @@ ENVIRONMENT_KEYS = (
     "PUBLIC_BASE_URL",
     "TELEGRAM_ALLOWED_USER_ID",
     "TELEGRAM_ALLOWED_CHAT_ID",
+    "WORKER_POLL_SECONDS",
+    "WORKER_SHUTDOWN_GRACE_SECONDS",
+    "WORKER_PRICE_CONCURRENCY",
+    "RECOMMENDATION_HISTORY_DAYS",
+    "RECOMMENDATION_DISCOUNT_FRACTION",
+    "RECOMMENDATION_MIN_PRIOR_OBSERVATIONS",
+    "RECOMMENDATION_PRICE_MAX_AGE_HOURS",
 )
 
 
@@ -134,3 +141,23 @@ def test_environment_configuration_is_cached(monkeypatch: pytest.MonkeyPatch) ->
     assert get_settings() is first
     get_settings.cache_clear()
     assert get_settings().household_timezone == "UTC"
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"WORKER_POLL_SECONDS": 0},
+        {"WORKER_POLL_SECONDS": float("nan")},
+        {"WORKER_SHUTDOWN_GRACE_SECONDS": 121},
+        {"WORKER_PRICE_CONCURRENCY": 9},
+        {"RECOMMENDATION_HISTORY_DAYS": 0},
+        {"RECOMMENDATION_DISCOUNT_FRACTION": "NaN"},
+        {"RECOMMENDATION_DISCOUNT_FRACTION": "1"},
+        {"RECOMMENDATION_DISCOUNT_FRACTION": "1e-30"},
+        {"RECOMMENDATION_MIN_PRIOR_OBSERVATIONS": 0},
+        {"RECOMMENDATION_PRICE_MAX_AGE_HOURS": 0},
+    ],
+)
+def test_runtime_limits_reject_unbounded_or_invalid_configuration(values: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**values)

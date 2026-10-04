@@ -32,7 +32,7 @@ setup](telegram.md) for webhook registration and the worker.
 | `WORKER_SHUTDOWN_GRACE_SECONDS` | `30` | Finite number greater than 0 and at most 120; drain active work before cancellation on SIGINT/SIGTERM. |
 | `WORKER_PRICE_CONCURRENCY` | `2` | Integer 1–8; concurrent price lanes in one worker. |
 | `RECOMMENDATION_HISTORY_DAYS` | `30` | Integer 1–365; preceding price-history window. |
-| `RECOMMENDATION_DISCOUNT_FRACTION` | `0.10` | Decimal strictly between 0 and 1; current unit price must be at most `(1 − fraction) × median` for discount advice. |
+| `RECOMMENDATION_DISCOUNT_FRACTION` | `0.10` | Decimal strictly between 0 and 1, with at most six meaningful fractional places; current unit price must be at most `(1 − fraction) × median` for discount advice. |
 | `RECOMMENDATION_MIN_PRIOR_OBSERVATIONS` | `3` | Integer 3–365; minimum earlier comparable successful observations, excluding the current observation. |
 | `RECOMMENDATION_PRICE_MAX_AGE_HOURS` | `48` | Integer 1–720; maximum age of the latest successful available unit-price evidence. |
 

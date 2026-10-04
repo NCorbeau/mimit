@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mimit.clock import Clock
 from mimit.config import Settings
 from mimit.observability import elapsed_ms, log_event
+from mimit.recommendations import RecommendationConfig
 from mimit.telegram.service import process_message
 
 MAX_BODY_BYTES = 64 * 1024
@@ -114,6 +115,7 @@ def create_webhook_router(
                 text=text,
                 clock=clock,
                 timezone=settings.household_timezone,
+                recommendation_config=RecommendationConfig.from_settings(settings),
             )
         except Exception:
             # SQLAlchemy exception strings/tracebacks can contain text and credentials.

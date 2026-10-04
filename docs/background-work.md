@@ -104,8 +104,11 @@ actionable state. Unchanged states and recovery to OK stay quiet. State changes 
 their generation-based outbox identity commit together. A new state cancels superseded
 pending/sending advice and clears its lease; an old sender cannot acknowledge that
 cancelled row. A same-state rationale can refresh a pending message without creating
-another alert. Cancellation cannot retract a Telegram request already in flight, and
-crash ambiguity can still cause duplicate delivery.
+another alert. Before HTTP, delivery reevaluates current stock and price freshness under
+the household lock and a live lease. A changed state supersedes the claimed advice and
+applies the same transition rules; an unchanged state refreshes the sending payload.
+The preflight transaction closes before HTTP. Cancellation cannot retract a Telegram
+request already in flight, and crash ambiguity can still cause duplicate delivery.
 
 ## Operator diagnostics
 

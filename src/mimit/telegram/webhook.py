@@ -3,6 +3,7 @@
 import hmac
 import json
 import logging
+from time import perf_counter
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mimit.clock import Clock
 from mimit.config import Settings
+from mimit.observability import elapsed_ms, log_event
 from mimit.telegram.service import process_message
 
 MAX_BODY_BYTES = 64 * 1024
@@ -69,14 +71,14 @@ def create_webhook_router(
     expected = settings.telegram_webhook_secret.get_secret_value().encode("ascii")
     router = APIRouter()
 
-    @router.post("/telegram/webhook")
-    async def telegram_webhook(request: Request) -> dict[str, bool]:
+    async def handle_update(request: Request) -> dict[str, bool]:
         headers = request.headers.getlist(SECRET_HEADER)
         if len(headers) != 1 or not hmac.compare_digest(headers[0].encode("utf-8"), expected):
             raise HTTPException(status_code=403, detail="Forbidden")
         payload = await _payload(request)
         update_id = _integer(payload.get("update_id"), minimum=0)
         if "message" not in payload:
+            log_event("telegram_update_receipt", update_id=update_id, outcome="ignored")
             return {"ok": True}
         message = payload["message"]
         if not isinstance(message, dict):
@@ -92,6 +94,7 @@ def create_webhook_router(
         ):
             raise HTTPException(status_code=403, detail="Forbidden")
         if "text" not in message:
+            log_event("telegram_update_receipt", update_id=update_id, outcome="ignored")
             return {"ok": True}
         text = message["text"]
         if not isinstance(text, str) or not text or len(text) > 4096:
@@ -103,7 +106,7 @@ def create_webhook_router(
         if "\x00" in text:
             raise HTTPException(status_code=422, detail="Invalid Telegram message text")
         try:
-            await process_message(
+            processed = await process_message(
                 sessions,
                 update_id=update_id,
                 user_id=user_id,
@@ -114,10 +117,41 @@ def create_webhook_router(
             )
         except Exception:
             # SQLAlchemy exception strings/tracebacks can contain text and credentials.
-            logging.getLogger(__name__).error("telegram_processing_failed")
+            log_event(
+                "telegram_processing_failed",
+                level=logging.ERROR,
+                update_id=update_id,
+                error_code="persistence_error",
+            )
             raise HTTPException(
                 status_code=503, detail="Processing temporarily unavailable"
             ) from None
+        log_event(
+            "telegram_update_receipt",
+            update_id=update_id,
+            outcome="processed" if processed else "duplicate",
+        )
         return {"ok": True}
+
+    @router.post("/telegram/webhook")
+    async def telegram_webhook(request: Request) -> dict[str, bool]:
+        started = perf_counter()
+        try:
+            result = await handle_update(request)
+        except HTTPException as error:
+            log_event(
+                "telegram_webhook_result",
+                outcome="rejected" if error.status_code < 500 else "failed",
+                http_status=error.status_code,
+                duration_ms=elapsed_ms(started),
+            )
+            raise
+        log_event(
+            "telegram_webhook_result",
+            outcome="accepted",
+            http_status=200,
+            duration_ms=elapsed_ms(started),
+        )
+        return result
 
     return router

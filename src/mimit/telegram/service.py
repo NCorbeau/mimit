@@ -32,6 +32,7 @@ from mimit.inventory import (
     parse_quantity,
     stock_at,
 )
+from mimit.observability import log_event
 from mimit.products.display import stock_price_summaries
 
 HELP = (
@@ -111,6 +112,12 @@ async def process_message(
                 created_at=now,
             )
         )
+    log_event(
+        "telegram_message_committed",
+        update_id=update_id,
+        household_id=household_id,
+        outcome="committed",
+    )
     return True
 
 

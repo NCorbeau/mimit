@@ -1,10 +1,12 @@
 """One-shot product checks: external I/O outside short database transactions."""
 
+import asyncio
 import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from time import perf_counter
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -14,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mimit.clock import Clock
 from mimit.db.models import Consumable, OfferSource, PriceObservation
+from mimit.observability import elapsed_ms, log_event
 from mimit.products.types import (
     ErrorCode,
     ExtractedProduct,
@@ -165,11 +168,44 @@ class ProductCheckService:
         product: ExtractedProduct | None = None
         error: ProductCheckError | None = None
         stage = "fetch"
+        started = perf_counter()
+        log_event(
+            "product_fetch_started",
+            consumable_id=consumable_id,
+            offer_source_id=source.source_id,
+            outcome="started",
+        )
         try:
             page = await self.fetcher.fetch(source.url)
+            log_event(
+                "product_fetch_result",
+                consumable_id=consumable_id,
+                offer_source_id=source.source_id,
+                outcome="success",
+                http_status=page.status_code,
+                body_bytes=page.body_bytes,
+                duration_ms=elapsed_ms(started),
+            )
             stage = "extract"
+            started = perf_counter()
             product = self.extractor.extract(page.html, source.url, source.variant)
             _validate(product, source)
+            log_event(
+                "product_extraction_result",
+                consumable_id=consumable_id,
+                offer_source_id=source.source_id,
+                outcome="success",
+                duration_ms=elapsed_ms(started),
+            )
+        except asyncio.CancelledError:
+            log_event(
+                "product_fetch_result" if stage == "fetch" else "product_extraction_result",
+                consumable_id=consumable_id,
+                offer_source_id=source.source_id,
+                outcome="cancelled",
+                duration_ms=elapsed_ms(started),
+            )
+            raise
         except ProductCheckError as exc:
             error = exc
             product = None
@@ -178,6 +214,16 @@ class ProductCheckService:
                 ErrorCode.TRANSPORT_ERROR if stage == "fetch" else ErrorCode.INVALID_PRODUCT
             )
             product = None
+        if error is not None:
+            log_event(
+                "product_fetch_result" if stage == "fetch" else "product_extraction_result",
+                consumable_id=consumable_id,
+                offer_source_id=source.source_id,
+                outcome="failed",
+                error_code=error.code,
+                http_status=error.http_status,
+                duration_ms=elapsed_ms(started),
+            )
         instant = self.clock.now()
         if instant.tzinfo is None or instant.utcoffset() is None:
             raise ValueError("clock must return a timezone-aware timestamp")
@@ -251,6 +297,14 @@ class ProductCheckService:
                 )
         except SQLAlchemyError:
             raise PriceCheckServiceError("persistence_error") from None
+        log_event(
+            "product_observation_committed",
+            consumable_id=consumable_id,
+            offer_source_id=source.source_id,
+            observation_id=result.observation_id,
+            outcome=result.outcome,
+            error_code=result.error_code,
+        )
         return result
 
 

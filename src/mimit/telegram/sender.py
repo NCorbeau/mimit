@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
+from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -35,6 +36,8 @@ from mimit.clock import Clock, SystemClock
 from mimit.config import get_settings
 from mimit.db.models import NotificationOutbox
 from mimit.db.session import create_engine, get_session_factory
+from mimit.observability import configure_logging, elapsed_ms, log_event
+from mimit.observability import install_log_redaction as install_log_redaction
 
 MAX_ATTEMPTS = 5
 LEASE_SECONDS = 60
@@ -75,26 +78,6 @@ class Claim:
     attempts: int
     expires_at: datetime
     payload: dict[str, Any] = field(repr=False)
-
-
-class _RedactTelegramURL(logging.Filter):
-    """HTTPX logs absolute request URLs, which contain the bot credential."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = re.sub(
-            r"https://api\.telegram\.org/bot[^/\s]+/",
-            "https://api.telegram.org/bot<redacted>/",
-            record.getMessage(),
-        )
-        record.args = ()
-        return True
-
-
-def install_log_redaction() -> None:
-    """Install credential-path redaction before Telegram HTTPX calls or setup."""
-    logger = logging.getLogger("httpx")
-    if not any(isinstance(item, _RedactTelegramURL) for item in logger.filters):
-        logger.addFilter(_RedactTelegramURL())
 
 
 class TelegramSender:
@@ -252,6 +235,14 @@ async def acknowledge(
             .values(**values, lease_owner=None, lease_expires_at=None)
             .returning(NotificationOutbox.id)
         )
+    log_event(
+        "notification_acknowledged",
+        notification_id=claim.id,
+        attempt=claim.attempts,
+        outcome=values["state"] if row_id is not None else "stale",
+        error_code=values.get("last_error"),
+        acknowledged=row_id is not None,
+    )
     return row_id is not None
 
 
@@ -265,16 +256,48 @@ async def send_once(
     claim = await claim_next(sessions, clock)
     if claim is None:
         return False
+    log_event(
+        "notification_claimed", notification_id=claim.id, attempt=claim.attempts, outcome="claimed"
+    )
     if clock.now() >= claim.expires_at:
         return True  # Lease expired before I/O; recovery belongs to a later claim.
-    result = await sender.send(claim.payload)
-    await acknowledge(sessions, clock, claim, result, jitter=jitter)
+    started = perf_counter()
+    try:
+        result = await sender.send(claim.payload)
+    except asyncio.CancelledError:
+        log_event(
+            "notification_send_result",
+            notification_id=claim.id,
+            attempt=claim.attempts,
+            outcome="cancelled",
+            duration_ms=elapsed_ms(started),
+        )
+        raise
+    acknowledged = await acknowledge(sessions, clock, claim, result, jitter=jitter)
+    log_event(
+        "notification_send_result",
+        notification_id=claim.id,
+        attempt=claim.attempts,
+        outcome=result.outcome,
+        error_code=result.error,
+        retry_after=result.retry_after,
+        acknowledged=acknowledged,
+        duration_ms=elapsed_ms(started),
+    )
     return True
 
 
 async def run(*, once: bool) -> None:
     settings = get_settings()
     settings.require_telegram_configuration()
+    configure_logging(
+        secrets=[
+            settings.telegram_bot_token.get_secret_value() if settings.telegram_bot_token else "",
+            settings.telegram_webhook_secret.get_secret_value()
+            if settings.telegram_webhook_secret
+            else "",
+        ]
+    )
     assert settings.telegram_bot_token is not None
     assert settings.telegram_allowed_chat_id is not None
     # SIGTERM cancels even in-flight HTTP; its durable lease remains recoverable.
@@ -296,7 +319,9 @@ async def run(*, once: bool) -> None:
                     worked = await send_once(sessions, clock, sender)
                 except Exception:
                     # DB errors may include payload/credentials. Retry without rendering details.
-                    logging.getLogger(__name__).error("Outbox sender iteration failed")
+                    log_event(
+                        "telegram_sender_failed", level=logging.ERROR, error_code="runtime_error"
+                    )
                     if once:
                         raise RuntimeError("Outbox sender iteration failed") from None
                     worked = False

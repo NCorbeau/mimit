@@ -150,10 +150,39 @@ This completes repository implementation and review for
 [MAC-33](https://linear.app/mglownia/issue/MAC-33/deliver-actionable-recommendations),
 [MAC-61](https://linear.app/mglownia/issue/MAC-61/add-structured-operational-logging)
 and [MAC-64](https://linear.app/mglownia/issue/MAC-64/perform-final-secret-and-reliability-review).
-The production release, a later observation from the next genuine daily run,
-the deployed explained stock reply, and a real purchase update remain required
+At this repository-review checkpoint, the production release, a later observation
+from the next genuine daily run, the deployed explained stock reply, and a real
+purchase update remained required
 for [MAC-62](https://linear.app/mglownia/issue/MAC-62/run-real-zooplus-production-acceptance-flow).
 [MAC-34](https://linear.app/mglownia/issue/MAC-34/deploy-and-prove-production-acceptance)
 and its production milestone remain open until every required sub-issue and that
 household exit gate pass. No accelerated checks or fabricated purchases are
 counted as that evidence.
+
+## First production worker run — 5 October 2026 (Warsaw)
+
+[PR #8](https://github.com/NCorbeau/mimit/pull/8) passed hosted CI and merged as
+`a53f5beea31c14efd0b170b107b31d984e85634a`. The pinned Railway configuration
+plan changed eleven variables and the private worker start command, with zero
+resources added or destroyed; it was applied. Railway reported SUCCESS for API
+deployment `7430c937-8617-4e15-8796-4c4e491a0ffc` and unified worker deployment
+`49abdbf4-73b1-445e-a922-d77ca71c23d1`, both on the merged commit. A subsequent
+configuration preview reported no pending changes. The API `/healthz` and `/readyz`
+returned HTTP 200. The Telegram setup check found the expected webhook, zero pending
+updates and no delivery error.
+
+At **2026-10-04 22:06:29–22:06:30 UTC** (00:06 on 5 October in Warsaw), safe
+worker events for the already tracked Schesir item recorded a job claim, successful
+fetch and extraction, an **OK** recommendation transition, and acknowledged
+successful job settlement with an observation ID. This is evidence of the first
+scheduled production check. The logs do not expose the extracted price or prove
+what `/stock` displays. Direct production-database inspection was not performed;
+the required temporary Railway SSH-key registration was rejected by automatic
+approval review as an account-access change.
+
+[MAC-62](https://linear.app/mglownia/issue/MAC-62/run-real-zooplus-production-acceptance-flow)
+still needs the deployed stock/price explanation, an observation from the **next
+genuine daily run**, and a real purchase with its stock update. The 2 October test
+purchase does not satisfy that gate. Keep
+[MAC-34](https://linear.app/mglownia/issue/MAC-34/deploy-and-prove-production-acceptance)
+and its production milestone open until those facts are verified.

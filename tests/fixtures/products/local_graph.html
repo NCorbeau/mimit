@@ -1,0 +1,8 @@
+<script TYPE="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+ {"@id":"#product","@type":["Thing","Product"],"name":"Synthetic coffee","sku":"coffee-large","url":"https://shop.example/product?activeVariant=coffee-large","offers":{"@id":"#offer"}},
+ {"@id":"#offer","@type":"https://schema.org/Offer","url":"https://shop.example/product?activeVariant=coffee-large","itemOffered":{"@id":"#product"},"price":12.30,"priceCurrency":"EUR","availability":"http://schema.org/OutOfStock","priceSpecification":{"@id":"#unit"}},
+ {"@id":"#unit","@type":"UnitPriceSpecification","priceType":"UnitPrice","price":"20","priceCurrency":"EUR","referenceQuantity":{"@id":"#quantity"}},
+ {"@id":"#quantity","@type":"QuantitativeValue","value":2,"unitCode":"KGM"}
+]}
+</script>

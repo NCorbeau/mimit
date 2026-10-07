@@ -19,10 +19,10 @@ or BUY NOW; unchanged states and recovery to OK stay silent. See [Telegram
 use](docs/telegram.md), [product checks](docs/product-checks.md) and [background
 work](docs/background-work.md).
 
-Railway deployment and live inventory acceptance are recorded. Recurring checks,
-recommendations and structured logging are implemented in the repository; their full
-production acceptance remains a separate gate. See the dated [verification
-record](docs/verification.md) for evidence and its limits.
+Railway deployment and the first household production acceptance are recorded.
+The live Telegram flow verified stored prices, a later daily observation, an explained
+recommendation and a real purchase with its stock update on 7 October 2026. See the
+dated [verification record](docs/verification.md) for evidence and its limits.
 
 ## Architecture
 
@@ -144,5 +144,6 @@ manual corrections and an approximate consumption rate.
 
 There is no web frontend, queue broker, automatic purchasing, automatic pack conversion,
 source-editing workflow or general store scraper framework. API readiness does not prove
-worker health. Production price-history, recurrence and recommendation acceptance
-remains unverified until recorded separately.
+worker health. The first household production acceptance is recorded; broader store
+support and live delivery of an actionable state-change alert are not established
+by that flow.

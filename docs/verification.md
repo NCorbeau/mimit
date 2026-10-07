@@ -181,8 +181,48 @@ the required temporary Railway SSH-key registration was rejected by automatic
 approval review as an account-access change.
 
 [MAC-62](https://linear.app/mglownia/issue/MAC-62/run-real-zooplus-production-acceptance-flow)
-still needs the deployed stock/price explanation, an observation from the **next
-genuine daily run**, and a real purchase with its stock update. The 2 October test
+at that checkpoint still needed the deployed stock/price explanation, an observation
+from the **next genuine daily run**, and a real purchase with its stock update. The 2 October test
 purchase does not satisfy that gate. Keep
 [MAC-34](https://linear.app/mglownia/issue/MAC-34/deploy-and-prove-production-acceptance)
 and its production milestone open until those facts are verified.
+
+## Household production acceptance — 7 October 2026 (Warsaw)
+
+The user confirmed that the deployed `/stock` flow works correctly and supplied two
+Telegram screenshots for the existing Schesir Complete Prawn item. The earlier
+onboarding record identifies the exact Zooplus variant as `2333304.0`.
+
+- Before the purchase, `/stock` displayed **14.844137 pouches**, estimated **14.84
+  days remaining**, consumption **1 pouch/day** and reserve **3 days**.
+- The stored offer was **42.96 PLN**, **84.24 PLN/kg**, **in stock**, with price and
+  availability observed **2026-10-07 00:06 CEST** (6 October 22:06 UTC). These are
+  timestamped observed values, not fixed expectations for future checks.
+- The explained recommendation was **OK: Stock is above twice your reserve. Stock
+  only: too little comparable price history.** This is consistent with the configured
+  reserve and the three-earlier-observation minimum for discount evidence.
+- The displayed observation is later than the first recorded production check at
+  **5 October 00:06 CEST** and matches the unchanged 24-hour anchor. Together with
+  the recorded deployed worker, it satisfies the later-daily-observation gate through
+  the live Telegram display. No accelerated or operator check was run in this session.
+- In response to the real-purchase question, the user confirmed it works and supplied
+  `/bought <existing-item-id> 5` evidence at **21:26**. The bot acknowledged
+  **19.842744 pouches**; the subsequent `/stock` showed **19.842677 pouches** and
+  **19.84 days remaining**, with consumption and reserve unchanged. The small
+  differences from the earlier quantity plus five are consistent with continuous
+  depletion. Price, availability, observation time and the explained OK state persisted.
+
+This completes the first household acceptance for
+[MAC-62](https://linear.app/mglownia/issue/MAC-62/run-real-zooplus-production-acceptance-flow)
+and the production exit gate for
+[MAC-34](https://linear.app/mglownia/issue/MAC-34/deploy-and-prove-production-acceptance),
+whose other required sub-issues were already Done. The screenshots and user
+confirmation are acceptance evidence; no purchase was fabricated or sent by an agent.
+They do not establish every intervening daily run, direct database inspection or
+delivery of an actionable BUY SOON / BUY NOW alert. Automated contention, restart,
+retry and idempotency evidence remains the previously dated real-PostgreSQL record.
+This documentation update does not deploy code or rerun those production checks.
+
+For this documentation change, `make check` passed Ruff lint/format, strict mypy
+(54 source files) and **375 fast tests**; `git diff --check` passed. No persistence
+code changed, so the 107 real-PostgreSQL tests remain the earlier dated evidence.

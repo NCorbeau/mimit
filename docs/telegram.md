@@ -139,7 +139,8 @@ different updates. Use one private worker for this v1 chat.
 Live deployed onboarding, `/stock`, purchase and correction were recorded on 2 October
 2026. Repository tests cover HTTP/PostgreSQL behavior and simulated external delivery;
 no automated test sends a real Telegram message. The unified daily worker, stored
-price-history advice and recommendation delivery still require deployment verification
-and the full real-household price/history acceptance flow. See the dated [verification
-record](verification.md) and [deployment setup](deployment.md); implementation does not
-itself pass those gates.
+price-history advice and real-purchase stock update were verified in the deployed bot
+on 7 October 2026. The stock reply showed a later observation on the daily anchor and
+an explained OK recommendation with the insufficient-price-history fallback. This
+flow does not verify a live actionable state-change alert. See the dated [verification
+record](verification.md) and [deployment setup](deployment.md) for evidence and limits.

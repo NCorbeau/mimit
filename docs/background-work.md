@@ -1,8 +1,8 @@
 # Background checks and recommendations
 
-Updated 4 October 2026. These are repository runtime contracts, not evidence that the
-new worker has been deployed or that full household acceptance has passed. Work is
-tracked by
+Updated 7 October 2026. These are repository runtime contracts. The unified worker
+release and first household acceptance are recorded separately in the dated
+[verification record](verification.md). Work is tracked by
 [MAC-32](https://linear.app/mglownia/issue/MAC-32/build-durable-background-tracking),
 [MAC-33](https://linear.app/mglownia/issue/MAC-33/deliver-actionable-recommendations)
 and

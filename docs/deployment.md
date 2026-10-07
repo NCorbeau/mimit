@@ -4,8 +4,9 @@ Work tracked by
 [MAC-59](https://linear.app/mglownia/issue/MAC-59/deploy-api-worker-and-postgresql-to-railway)
 and
 [MAC-60](https://linear.app/mglownia/issue/MAC-60/configure-secrets-production-webhook-and-health-checks).
-The parent production acceptance gate remains separate: deployment verification of
-recurring checks and the full real-household price/history flow are still required.
+The unified worker release and first household production acceptance are recorded in
+[verification](verification.md), including a later daily observation, explained
+Telegram stock reply and real purchase update verified on 7 October 2026.
 
 ## Release topology
 
@@ -24,9 +25,9 @@ Both application services use `Dockerfile`: Python 3.12, uv 0.12.22, locked prod
 dependencies, and an unprivileged runtime user. The Docker context allowlist excludes
 `.env`, Git metadata, tests, and local caches. The repository worker runs scheduling,
 daily prices and reply/recommendation delivery independently. This table describes the
-intended release configuration. The earlier recorded deployment used the
-interactive-only sender; no deployment of the unified worker or its recommendation
-migration is claimed by these documentation updates.
+release configuration. The unified worker deployment was recorded on 5 October;
+the later household acceptance is recorded on 7 October. See the dated
+[verification record](verification.md) for evidence and its limits.
 
 `DATABASE_URL` references `Postgres.DATABASE_URL`, whose host is private. The API runs
 `alembic upgrade head` as a pre-deploy command. A failed migration stops that

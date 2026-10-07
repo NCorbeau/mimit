@@ -1,57 +1,48 @@
 # Mimit
 
-Mimit is a Telegram-first household replenishment assistant. Track cat food, coffee,
-dishwasher tablets and other consumables, estimate when they will run out, and receive a
-quiet reminder when stock or stored price history makes buying useful.
+Keep everyday supplies topped up, with quiet reminders in Telegram.
 
-Send a product URL, then enter a name, current stock, canonical unit (for example,
-“pouch”), daily consumption, and reserve days. Confirm with `yes`. `/stock [page]` shows
-estimated stock, days remaining, stored prices and an explained **OK / BUY SOON / BUY
-NOW** recommendation (five items per page). `/bought <item-id> 6` records a purchase;
-`/setstock <item-id> 12` corrects the count. Quantities always use the item's canonical
-unit; pack conversion is manual.
+Mimit tracks things like cat food, coffee and dishwasher tablets. Tell it how much
+you have and how quickly you use it; it estimates when you'll run low and helps
+you decide when to buy more.
 
-Onboarding saves the exact offer URL and schedules the first price check. The private
-worker fetches outside the webhook and repeats checks every 24 hours. Prices are normal
-one-time offer prices; subscription pricing is excluded. The supported first target is
-one exact Zooplus product variant. Notifications are sent when an item enters BUY SOON
-or BUY NOW; unchanged states and recovery to OK stay silent. See [Telegram
-use](docs/telegram.md), [product checks](docs/product-checks.md) and [background
-work](docs/background-work.md).
+## What it does
 
-Railway deployment and the first household production acceptance are recorded.
-The live Telegram flow verified stored prices, a later daily observation, an explained
-recommendation and a real purchase with its stock update on 7 October 2026. See the
-dated [verification record](docs/verification.md) for evidence and its limits.
+- **Tracks your stock.** Estimates quantities and days remaining from your daily usage.
+- **Checks prices daily.** Stores price and availability history for the exact offer you add.
+- **Explains its advice.** Shows **OK**, **BUY SOON** or **BUY NOW**, with a reason.
+- **Keeps reminders quiet.** Alerts when an item enters BUY SOON or BUY NOW; unchanged
+  states and recovery to OK stay silent.
 
-## Architecture
+Price-based advice needs enough recent, comparable history. Until then, Mimit uses
+stock alone. It tracks normal one-time prices, excluding subscription pricing.
 
-Python 3.12+, FastAPI, SQLAlchemy 2, Alembic, PostgreSQL, asyncio, and httpx. One
-codebase serves a public API and a private worker, with PostgreSQL holding both product
-state and durable work. [Railway deployment](docs/deployment.md) uses the same
-Dockerfile for both processes; no cloud resources are required for local development.
+The current version is for one allowed user in one private Telegram chat, with one
+offer per item. Initial merchant support focuses on one exact Zooplus product variant.
+Stock estimates depend on your usage rate and manual corrections. Pack conversion is
+manual; Mimit does not place orders or provide a web frontend.
 
-- A household owns consumables, which hold stock in a user-chosen canonical unit.
-- Each consumable has one offer source in v1; its exact submitted URL and variant
-  identity remain separate from the consumable.
-- Price observations and purchases have their own history tables.
-- PostgreSQL jobs retain recurring checks, retries and leases; recommendation
-  transitions and notification intents commit together.
-- Telegram update receipts prevent repeating committed inbound mutations.
-- Domain timestamps are supplied explicitly through an injected clock and stored
-  as timezone-aware PostgreSQL timestamps.
+## Using the bot
 
-One private `python -m mimit.worker` process runs independent scheduling, price checking
-and outbox delivery lanes. Claims commit before HTTP; lease fencing protects persisted
-results. Both replies and recommendation notifications use bounded retries. See [the
-invariants](docs/invariants.md), [configuration contract](docs/configuration.md), and
-[Telegram setup and use](docs/telegram.md).
+1. Send a product URL.
+2. Enter its name, current stock, unit (such as `pouch`), daily usage and reserve days.
+3. Confirm with `yes`. Mimit saves the item and schedules its first price check.
 
-## Local setup
+| Command | What it does |
+| --- | --- |
+| `/stock [page]` | Show stock, days remaining, stored prices and buying advice. |
+| `/bought <item-id> 6` | Record a purchase of six units. |
+| `/setstock <item-id> 12` | Correct the current stock to twelve units. |
+| `/cancel` | Cancel unfinished setup for an item. |
+| `/help` | Show the available commands. |
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Docker with
-Compose. uv downloads Python 3.12 when needed. The committed lockfile fixes the resolved
-dependency versions.
+Copy the item ID from `/stock`. All quantities use the unit you chose for that item.
+See [Telegram setup and use](docs/telegram.md) to connect your own bot.
+
+## Run locally
+
+You'll need [uv](https://docs.astral.sh/uv/getting-started/installation/) and Docker
+with Compose. uv downloads Python 3.12 when needed.
 
 ```sh
 git clone https://github.com/NCorbeau/mimit.git
@@ -63,87 +54,53 @@ uv run alembic upgrade head
 uv run uvicorn mimit.api:create_app --factory --reload
 ```
 
-`GET http://127.0.0.1:8000/healthz` is a process health check, not a database readiness
-check. With complete Telegram configuration, `/telegram/webhook` is enabled.
+Open [the health endpoint](http://127.0.0.1:8000/healthz) to check that the API is
+running. `/readyz` checks database connectivity and the presence of a migration
+revision; neither endpoint checks worker health.
 
-PostgreSQL is bound only to `127.0.0.1:55439`. Its `mimit` username/password are local
-development values only. If that port is occupied, set `MIMIT_POSTGRES_PORT` for Compose
-and update `DATABASE_URL` in `.env` to match. `docker compose down` stops the database
-and retains its named volume; add `--volumes` only to deliberately delete local data.
-
-No Telegram credentials are needed for tests or the health-only application. For the
-bot, follow [Telegram setup](docs/telegram.md), including the separate `uv run python -m
-mimit.worker` process. `.env` is ignored by Git. Runtime configuration uses environment
-variables and may load `.env` for local convenience. Production credentials belong in
-deployment variables.
-
-## Verification
+No Telegram credentials are needed to run the API locally or run tests. To use the
+bot, complete [Telegram setup](docs/telegram.md) and start the worker in another terminal:
 
 ```sh
-make check                  # Ruff lint/format, strict mypy, fast unit tests
+uv run python -m mimit.worker
+```
+
+The worker checks prices and sends replies and reminders. Keep credentials in the
+ignored `.env` file locally and in deployment variables in production.
+
+Local PostgreSQL uses port `55439`. If it's occupied, change `MIMIT_POSTGRES_PORT`
+for Compose and update `DATABASE_URL` in `.env`. `docker compose down` stops the
+database and keeps your data; adding `--volumes` deletes it.
+
+## Development
+
+```sh
+make check                  # Lint, formatting, strict type checks and fast tests
 export TEST_DATABASE_URL='postgresql+asyncpg://mimit:mimit@localhost:55439/mimit'
-make test-integration       # actual PostgreSQL; creates disposable databases
+make test-integration       # Real PostgreSQL tests in disposable databases
 ```
 
-The integration role needs `CREATEDB`. The harness creates a uniquely named
-`mimit_test_<uuid>` database, migrates it from zero, and drops only that database on
-completion. It never truncates the database named in `TEST_DATABASE_URL`. Do not use a
-production database account for tests. Explicit integration runs fail if
-`TEST_DATABASE_URL` is missing or PostgreSQL is unavailable; they do not silently
-substitute SQLite or skip verification. Fast tests need no database.
+Fast tests need no database. Integration tests require a local PostgreSQL role with
+`CREATEDB`; they create and remove a unique test database without truncating the database
+in `TEST_DATABASE_URL`. Use a local test account. CI runs both suites against PostgreSQL 17.
 
-Individual commands:
+## How it's built
 
-```sh
-uv run pytest -m 'not integration'
-uv run pytest -m integration
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run alembic check        # compare the current migrated DB with model metadata
-```
+Python 3.12+, FastAPI, SQLAlchemy, Alembic and PostgreSQL. One codebase runs a public
+API and a private worker, with PostgreSQL storing inventory, history and durable work.
+Both processes use the same Dockerfile for [Railway deployment](docs/deployment.md).
 
-CI runs the same checks against PostgreSQL 17. `make format` applies Ruff fixes and
-formatting. To change the schema, generate and inspect an Alembic revision; committed
-migrations must describe their own schema rather than importing the current application
-metadata to create tables.
+Repeated Telegram updates cannot repeat a committed stock change. Work and replies
+survive restarts, with bounded retries. A crash after Telegram accepts a message can
+still cause duplicate delivery; failed messages may need operator attention.
 
-## Guarantees and current limits
+## Further reading
 
-Database constraints enforce the modeled quantity, relationship, identity, and state
-invariants. Integration tests verify migrations from zero, round trips, constraint
-failures, rollback, and concurrent uniqueness at the database boundary. The HTTP
-integration tests exercise the authenticated webhook, persistent onboarding, concurrent
-duplicate deliveries, stock changes, and rollback after a database failure. Worker and
-outbox tests use real PostgreSQL, deterministic clocks and simulated external responses.
-No automated test sends messages to a real Telegram account.
-
-Receipt, domain mutation, conversation state, and reply intent commit together. A
-household row lock serializes inventory updates. Duplicate deliveries with the same
-`update_id` cannot repeat a committed mutation. Different updates are processed in
-arrival/lock order; the API does not reorder them by Telegram ID. Webhook setup requests
-one delivery connection to reduce out-of-order conversations.
-
-Scheduled checks can repeat external HTTP after a crash, but only the current lease can
-commit a logical job result, recommendation changes and the next daily slot. A failed
-daily slot remains inspectable while future checks continue. Downtime produces one
-catch-up check, then resumes the daily anchor.
-
-Outbound delivery has bounded at-least-once attempt semantics and a visible failed
-state. A crash after Telegram accepts a message can cause a duplicate notification.
-Superseded queued recommendations are cancelled; cancellation cannot retract an HTTP
-request already in flight. Mimit does not claim exactly-once external effects or
-guaranteed eventual delivery.
-
-The [fetcher and extractor](docs/product-fetching.md) validate DNS at the actual
-connection boundary and extract exact-variant JSON-LD. The older [Zooplus
-spike](docs/zooplus-spike.md) remains historical developer evidence. Discount advice
-needs fresh, available unit-price evidence and at least three earlier comparable
-observations; otherwise recommendations use stock alone. The stock model depends on
-manual corrections and an approximate consumption rate.
-
-There is no web frontend, queue broker, automatic purchasing, automatic pack conversion,
-source-editing workflow or general store scraper framework. API readiness does not prove
-worker health. The first household production acceptance is recorded; broader store
-support and live delivery of an actionable state-change alert are not established
-by that flow.
+- [Telegram setup and use](docs/telegram.md) — connect a bot and manage your supplies.
+- [Configuration](docs/configuration.md) — environment variables and worker settings.
+- [Deployment](docs/deployment.md) — run the API, worker and PostgreSQL on Railway.
+- [Background work](docs/background-work.md) — daily checks, buying advice and delivery rules.
+- [Product checks](docs/product-checks.md) and [fetching](docs/product-fetching.md) — price
+  observations, operator tools and safe fetching.
+- [Persistence invariants](docs/invariants.md) — transaction and data guarantees.
+- [Verification record](docs/verification.md) — dated test results and production evidence.

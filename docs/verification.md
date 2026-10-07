@@ -242,5 +242,19 @@ failure/removal guards, readiness failures and changes during reconciliation.
 A read-only live dry run matched deployment `6919813740` and proposed success with
 `auto_inactive: false`; it did not write any deployment status. `git diff --check`
 passed. No persistence change was made and no local PostgreSQL tests were rerun.
-Workflow activation and a real corrected sidebar remain pending merge and live
-verification; the dry run is not evidence of an applied repair.
+Hosted [CI run 37684187897](https://github.com/NCorbeau/mimit/actions/runs/37684187897)
+passed `make check`, real-PostgreSQL integration tests and the repair checks.
+
+The guarded script then applied a one-time repair at 20:44:03 UTC, creating success
+status `19424369968` with `auto_inactive: false`. An independent API re-read confirmed
+success, and the refreshed repository sidebar no longer showed inactive. No Railway
+release was changed.
+
+[PR #12](https://github.com/NCorbeau/mimit/pull/12) merged as `3f4ceae` and its main CI
+passed. Both Railway services deployed that commit successfully. The race recurred:
+GitHub deployment `6920505027` succeeded at 20:48:20 UTC, the older release received
+a late success at 20:48:28, and the new release became inactive at 20:48:29.
+The automatic [repair run 37684812026](https://github.com/NCorbeau/mimit/actions/runs/37684812026)
+passed and restored success at 20:49:15 (status `19424610881`). An independent public
+API re-read confirmed the restored state. This verifies workflow activation and
+correction of the observed race; it does not remove the documented read/write gap.

@@ -1,0 +1,33 @@
+name: Repair Railway deployment status
+on:
+  deployment_status:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: railway-deployment-status
+  cancel-in-progress: false
+jobs:
+  repair:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment.environment == 'mimit / production' &&
+       github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.creator.login == 'railway-app[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Allow Railway replacement statuses to settle
+        run: sleep 45
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { repair } = require('./.github/scripts/repair-deployment-status.cjs');
+            await repair({ github, context, core });

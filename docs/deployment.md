@@ -77,6 +77,29 @@ and cancelled outbox rows. Verify it before starting the new worker. `railway up
 excludes ignored local secrets. No PostgreSQL integration tests should run against the
 production account.
 
+## GitHub deployment status
+
+Railway remains the authority for running releases. On 7 October 2026, a late
+success update for a replaced release triggered GitHub to mark the newest
+successful deployment inactive. The repository sidebar therefore showed inactive
+while both Railway services reported SUCCESS and `/readyz` returned HTTP 200.
+
+The `Repair Railway deployment status` workflow addresses this specific reporting
+race (MAC-154). After Railway reports success, it allows 45 seconds for replacement
+statuses to settle. It restores the newest `mimit / production` deployment only
+when its commit matches `main`, its immediately preceding status was successful,
+and its empty-URL inactive status follows a late Railway success on an older
+release by at most five seconds. API readiness must pass. It rechecks the latest
+deployment, commit and status before writing with `auto_inactive: false`.
+
+The workflow changes GitHub metadata only, using its temporary `GITHUB_TOKEN`
+with `deployments: write`; no additional credential or Railway change is needed.
+Failed/in-progress deployments, explicit removal statuses and unrelated inactive
+records are left alone. GitHub offers no atomic compare-and-set status API, so
+an external status change between the final read and write remains possible.
+The workflow can also be run manually from GitHub Actions with the same guards.
+It does not establish worker health or replace Railway release monitoring.
+
 ## Telegram activation
 
 Configure all five settings on the API together. The worker references the API's values

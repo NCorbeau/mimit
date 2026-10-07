@@ -226,3 +226,21 @@ This documentation update does not deploy code or rerun those production checks.
 For this documentation change, `make check` passed Ruff lint/format, strict mypy
 (54 source files) and **375 fast tests**; `git diff --check` passed. No persistence
 code changed, so the 107 real-PostgreSQL tests remain the earlier dated evidence.
+
+## GitHub deployment reporting repair — 7 October 2026
+
+MAC-154 prepares a metadata-only workflow for Railway's late-success race. Public
+GitHub status histories show the latest release `9797e20` succeeded at 20:15:27 UTC,
+the previous release received another success at 20:15:45, and the latest became
+inactive at 20:15:46. Railway API and worker deployment metadata both reported
+SUCCESS on `9797e20`; `/readyz` returned HTTP 200 with status ok.
+
+For this change, `UV_CACHE_DIR=/private/tmp/mimit-uv-cache make check` passed Ruff,
+formatting, strict mypy and 375 fast tests. `node --test
+.github/scripts/*.test.cjs` passed 21 regression checks for the observed race,
+failure/removal guards, readiness failures and changes during reconciliation.
+A read-only live dry run matched deployment `6919813740` and proposed success with
+`auto_inactive: false`; it did not write any deployment status. `git diff --check`
+passed. No persistence change was made and no local PostgreSQL tests were rerun.
+Workflow activation and a real corrected sidebar remain pending merge and live
+verification; the dry run is not evidence of an applied repair.

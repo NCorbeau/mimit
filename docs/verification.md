@@ -242,5 +242,11 @@ failure/removal guards, readiness failures and changes during reconciliation.
 A read-only live dry run matched deployment `6919813740` and proposed success with
 `auto_inactive: false`; it did not write any deployment status. `git diff --check`
 passed. No persistence change was made and no local PostgreSQL tests were rerun.
-Workflow activation and a real corrected sidebar remain pending merge and live
-verification; the dry run is not evidence of an applied repair.
+Hosted [CI run 37684187897](https://github.com/NCorbeau/mimit/actions/runs/37684187897)
+passed `make check`, real-PostgreSQL integration tests and the repair checks.
+
+The guarded script then applied a one-time repair at 20:44:03 UTC, creating success
+status `19424369968` with `auto_inactive: false`. An independent API re-read confirmed
+success, and the refreshed repository sidebar no longer showed inactive. No Railway
+release was changed. Automatic recurrence correction remains pending activation of
+the workflow in [PR #12](https://github.com/NCorbeau/mimit/pull/12).
